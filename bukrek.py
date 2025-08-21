@@ -32,7 +32,7 @@ except Exception as e:
 
 # --- Kamera ve Görüntü Ayarları ---
 cap = cv2.VideoCapture(0)
-cap.set(cv2.CAP_PROP_AUTO_WB, 1)  
+cap.set(cv2.CAP_PROP_AUTO_WB, 1)
 cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
