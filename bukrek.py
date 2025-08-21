@@ -38,7 +38,7 @@ cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
 # Ortama göre bu değişkeni True/False olarak ayarlayın
-USE_OUTDOOR = False  
+USE_OUTDOOR = False 
 
 # Sizin daha iyi sonuç aldığınız renk aralıklarını kullanıyoruz
 if USE_OUTDOOR:
@@ -143,10 +143,49 @@ while True:
         try:
             sbus_frame = ser.read(25)
             if len(sbus_frame) == 25:
-                channel_value = (sbus_frame[TRIGGER_CHANNEL * 2 + 1] | ((sbus_frame[TRIGGER_CHANNEL * 2] & 0x07) << 8))
+                # S-BUS veri paketinde 16 kanal verisi bulunur. 
+                # Her kanal 11 bit'tir ve 25 byte'lık paketin içinde yer alır.
+                # Paket yapısı: 0x0F, ch1_low, ch1_high... ch16_high, checksum
+                # Not: Bu kod FlySky i-BUS için yazılmıştır. i-BUS protokolü S-BUS'tan farklıdır.
+                # i-BUS paketi 32 byte uzunluğundadır ve her kanal 2 byte (16 bit) alır.
+                # FlySky i-BUS paketi:
+                # Byte 0: 0x20
+                # Byte 1: 0x40
+                # Byte 2-3: CH1
+                # ...
+                # Byte 30-31: CH15
+                # Byte 32-33: Checksum
                 
-                if channel_value > 1500:
-                    is_triggered = True
+                # Sizin RC alıcınız FlySky FS-iA10B ve i-BUS protokolünü kullanıyor.
+                # Bu nedenle okunan kanal değerini i-BUS'a göre yorumlamamız gerekir.
+                # İ-BUS protokolü için kanal değerleri:
+                # Kanal 1: byte 2-3
+                # Kanal 2: byte 4-5
+                # ...
+                # Kanal 10: byte 20-21 (Sizin kullandığınız kanal TRIGGER_CHANNEL = 5)
+                
+                # Bu satır S-BUS için yazılmış. i-BUS için düzeltilmesi gerekiyor.
+                # sbus_frame[TRIGGER_CHANNEL * 2 + 1] | ((sbus_frame[TRIGGER_CHANNEL * 2] & 0x07) << 8)
+                
+                # Düzeltme: RC_SERIAL_PORT baudrate'i 115200 olduğunda ve 
+                # i-BUS paketi 32 byte uzunluğunda olduğundan, 25 byte okumak yanlış.
+                # 32 byte'lık paketi okuyalım ve Trigger kanalına bakalım.
+                # Trigger channel = 5 --> 6. kanal (array'de 5. index)
+                # i-BUS'ta her kanal 2 byte yer kaplar.
+                # Kanal 5'in değerleri paketin 12. ve 13. byte'larında bulunur.
+                ibus_frame = ser.read(32)
+                if len(ibus_frame) == 32:
+                    channel_index = TRIGGER_CHANNEL - 1
+                    # i-BUS paketi 2. byte'tan sonra kanal verisini tutar
+                    byte_index = 2 + (channel_index * 2)
+                    
+                    # i-BUS kanal verisini (2 byte) oku
+                    channel_value = ibus_frame[byte_index] | (ibus_frame[byte_index + 1] << 8)
+                    
+                    # 1000-2000 aralığında gelen sinyalde 1500 üzeri sinyali tetikler.
+                    if channel_value > 1500:
+                        is_triggered = True
+
         except serial.SerialException as e:
             print(f"Seri okuma hatası: {e}")
             ser.close()
