@@ -140,24 +140,37 @@ except FileNotFoundError:
     print(f"RC Seri portu bulunamadı: {RC_SERIAL_PORT}")
     ser = None
 
+# Son tespit edilen renk ve güvenilirlik değişkenleri
+last_detected_color = "BELIRSIZ"
+last_detected_conf = 0.0
+
 while True:
     ok, frame = cap.read()
     if not ok:
         print("Kamera okunamadı.")
         break
 
+    # Kamera görüntüsünü sürekli işle
+    small_frame = cv2.resize(frame, (320, 240))
+    h, w = small_frame.shape[:2]
+
+    # İlgi alanını (ROI) belirle - karenin ortası
+    roi_ratio = 0.7
+    x0 = int((1-roi_ratio)/2 * w); x1 = int((1+(roi_ratio))/2 * w)
+    y0 = int((1-roi_ratio)/2 * h); y1 = int((1+(roi_ratio))/2 * h)
+    roi = small_frame[y0:y1, x0:x1]
+
+    # Renk tespitini her döngüde yap
+    last_detected_color, last_detected_conf = detect_color(roi)
+
     # RC girişini seri porttan oku
     is_triggered = False
     if ser:
         try:
-            # SBUS protokolünü basitleştirilmiş bir şekilde okuma
-            sbus_frame = ser.read(25) # SBUS çerçevesi 25 bayttır
+            sbus_frame = ser.read(25)
             if len(sbus_frame) == 25:
-                # Sadece tetikleyici kanalın değerini kontrol et.
-                # Bu kısım daha karmaşık bir SBUS çözücü ile değiştirilebilir.
                 channel_value = (sbus_frame[TRIGGER_CHANNEL * 2 + 1] | ((sbus_frame[TRIGGER_CHANNEL * 2] & 0x07) << 8))
                 
-                # Kumandanızdaki switch'in 1500 üzerindeki bir değeri tetikleme olarak kabul ediyoruz.
                 if channel_value > 1500:
                     is_triggered = True
         except serial.SerialException as e:
@@ -167,36 +180,26 @@ while True:
         except Exception as e:
             print(f"RC sinyal işleme hatası: {e}")
 
-
-    # Sadece RC kanalı tetiklendiğinde renk tespiti yap
+    # Sadece RC kanalı tetiklendiğinde telemetri mesajı gönder
     if is_triggered:
-        # Performans için kareyi yeniden boyutlandır
-        small_frame = cv2.resize(frame, (320, 240))
-        h, w = small_frame.shape[:2]
+        send_mavlink_message(last_detected_color, last_detected_conf)
 
-        # İlgi alanını (ROI) belirle - karenin ortası
-        roi_ratio = 0.7
-        x0 = int((1-roi_ratio)/2 * w); x1 = int((1+(roi_ratio))/2 * w)
-        y0 = int((1-roi_ratio)/2 * h); y1 = int((1+(roi_ratio))/2 * h)
-        roi = small_frame[y0:y1, x0:x1]
+    # Görselleştirme için orijinal kareye bilgi yazdır ve kareyi göster.
+    out = frame.copy()
+    h_orig, w_orig = frame.shape[:2]
+    x0_orig = int((1-roi_ratio)/2 * w_orig); x1_orig = int((1+(roi_ratio))/2 * w_orig)
+    y0_orig = int((1-roi_ratio)/2 * h_orig); y1_orig = int((1+(roi_ratio))/2 * h_orig)
 
-        label, conf = detect_color(roi)
-        send_mavlink_message(label, conf)
-
-        # Görselleştirme için orijinal kareye bilgi yazdır ve kareyi göster.
-        out = frame.copy()
-        h_orig, w_orig = frame.shape[:2]
-        x0_orig = int((1-roi_ratio)/2 * w_orig); x1_orig = int((1+(roi_ratio))/2 * w_orig)
-        y0_orig = int((1-roi_ratio)/2 * h_orig); y1_orig = int((1+(roi_ratio))/2 * h_orig)
-
-        cv2.rectangle(out, (x0_orig,y0_orig), (x1_orig,y1_orig), (255,255,255), 2)
-        cv2.putText(out, f"Renk: {label} (Guven: {conf:.3f})", (20, 40),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
-        cv2.imshow("frame", out)
+    cv2.rectangle(out, (x0_orig,y0_orig), (x1_orig,y1_orig), (255,255,255), 2)
+    # Ekrana her zaman en son tespit edilen rengi yaz
+    cv2.putText(out, f"Son Renk: {last_detected_color} (Guven: {last_detected_conf:.3f})", (20, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
+    if not is_triggered:
+        cv2.putText(out, "RC Tetikleyici Boşta", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
     else:
-        # Tetiklenmediyse sadece canlı kamera görüntüsünü göster
-        cv2.putText(frame, "RC Tetikleyici Boşta", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
-        cv2.imshow("frame", frame)
+        cv2.putText(out, "RC Tetikleyici AKTIF!", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
+        
+    cv2.imshow("frame", out)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
