@@ -123,7 +123,12 @@ def get_reliable_pulse_width(pin, timeout=0.03):
     if pin.wait_for_active(timeout=timeout):
         # Pinin LOW olmasını bekle
         if pin.wait_for_inactive(timeout=timeout):
-            return (time.time() - start_time) * 1000000
+            pulse_width = (time.time() - start_time) * 1000000
+            # Sinyal genişliğini absürt değerlerden korumak için bir üst limit belirle
+            if pulse_width > 3000:
+                print("UYARI: Sinyal genişliği beklenenden çok yüksek. Bağlantıyı kontrol edin!")
+                return 0
+            return pulse_width
     return 0
 
 while True:
