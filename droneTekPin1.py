@@ -5,14 +5,11 @@ import numpy as np
 import time
 from pymavlink import mavutil
 import os
-import RPi.GPIO as GPIO
+from gpiozero import DigitalInputDevice
 
 # --- GPIO ve Telemetri Ayarları ---
 # Düğmenin bağlı olduğu Raspberry Pi GPIO pinini BCM numarasıyla ayarlayın.
-# ÖNEMLİ: Bu kod RPi.GPIO kütüphanesini kullanır. Pin numarası BCM modunda 17'dir.
 TRIGGER_PIN = 17
-GPIO.setmode(GPIO.BCM)
-GPIO.setup(TRIGGER_PIN, GPIO.IN)
 
 # MAVLink bağlantısı için seri portu ayarlayın.
 TELEMETRY_PORT = "/dev/ttyUSB0"
@@ -30,7 +27,6 @@ except Exception as e:
     master = None
 
 # --- Kamera ve Görüntü Ayarları ---
-# Not: Sadece renk tespiti için kullanılıyor, görüntü gösterilmiyor.
 cap = cv2.VideoCapture(0)
 cap.set(cv2.CAP_PROP_AUTO_WB, 1)
 cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)
@@ -101,6 +97,25 @@ def send_mavlink_message(label, conf):
     master.mav.statustext_send(mavutil.mavlink.MAV_SEVERITY_INFO, message.encode())
 
 # --- Ana Döngü ---
+# Pin olaylarını işlemek için küresel değişkenler
+global pulse_width_us, pulse_start_time
+pulse_width_us = 0.0
+pulse_start_time = 0.0
+
+# Pin olay işleyicileri
+def pin_activated():
+    global pulse_start_time
+    pulse_start_time = time.time()
+
+def pin_deactivated():
+    global pulse_width_us
+    if pulse_start_time > 0:
+        pulse_width_us = (time.time() - pulse_start_time) * 1000000
+
+pin = DigitalInputDevice(TRIGGER_PIN)
+pin.when_activated = pin_activated
+pin.when_deactivated = pin_deactivated
+
 last_detected_color = "BELIRSIZ"
 last_detected_conf = 0.0
 last_status = "Boşta"
@@ -117,27 +132,9 @@ print(f"RC Tetikleme Pini: GPIO {TRIGGER_PIN}")
 
 try:
     while True:
-        # Sinyal genişliğini (pulse width) ölçmek için manuel döngü
-        pulse_width_us = 0
-        start_time = 0
-        
-        # Pinin LOW seviyeye düşmesini bekle
-        while GPIO.input(TRIGGER_PIN) == GPIO.HIGH:
-            pass
-        
-        # Pinin HIGH seviyeye çıkmasını bekle ve zamanı kaydet
-        while GPIO.input(TRIGGER_PIN) == GPIO.LOW:
-            pass
-        start_time = time.time()
-        
-        # Pinin LOW seviyeye geri dönmesini bekle ve zamanı kaydet
-        while GPIO.input(TRIGGER_PIN) == GPIO.HIGH:
-            pass
-        pulse_width_us = (time.time() - start_time) * 1000000
-
         # Sinyal genişliğine göre durumu belirle
         is_triggered = False
-        if pulse_width_us > 1500:
+        if pulse_width_us > 1500 and pulse_width_us < 2500: # Üst sınır ekleniyor
             is_triggered = True
             current_status = "AKTİF"
         else:
@@ -195,4 +192,3 @@ except KeyboardInterrupt:
     print("\nProgram kullanıcı tarafından sonlandırıldı.")
 finally:
     cap.release()
-    GPIO.cleanup()
