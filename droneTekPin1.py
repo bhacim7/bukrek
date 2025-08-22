@@ -104,10 +104,6 @@ button = Button(TRIGGER_PIN)
 
 last_detected_color = "BELIRSIZ"
 last_detected_conf = 0.0
-is_triggered = False
-is_stable = False
-last_stable_time = time.time()
-stable_state = -1 # -1:bilinmiyor, 0:LOW, 1:HIGH
 
 # Terminali temizle ve başlık yazdır
 def clear_screen():
@@ -141,22 +137,9 @@ while True:
         last_detected_color = current_color
         last_detected_conf = current_conf
 
-    # GPIO sinyali için debouncing (sekme önleme) mantığı
-    current_value = button.value
-    if current_value != stable_state:
-        # Değer değişti, zamanı sıfırla
-        last_stable_time = time.time()
-        stable_state = current_value
-    
-    # Yeterli süre kararlı kalmış mı kontrol et
-    if time.time() - last_stable_time > 0.1: # 0.1 saniye kararlılık
-        if current_value == 1:
-            # Pin değeri kararlı bir şekilde HIGH seviyesinde
-            is_triggered = True
-        else:
-            # Pin değeri kararlı bir şekilde LOW seviyesinde
-            is_triggered = False
-
+    # is_triggered durumunu button.value ile kontrol et
+    # Pin voltajı yüksekse (HIGH), tetiklenmiş kabul et.
+    is_triggered = button.value == 1
     if is_triggered:
         send_mavlink_message(last_detected_color, last_detected_conf)
 
@@ -179,6 +162,6 @@ while True:
     else:
         print("\nRC Tetikleme Durumu: Boşta")
 
-    time.sleep(0.01) # Daha sık kontrol için uyku süresini düşürdük
+    time.sleep(0.1)
 
 cap.release()
