@@ -117,16 +117,14 @@ print("-------------------------------------")
 print(f"RC Tetikleme Pini: GPIO {TRIGGER_PIN}")
 
 while True:
-    ok, frame = cap.read()
-    if not ok:
-        print("\nKamera okunamadı. Program sonlandırılıyor.")
-        break
-
     # Sinyal genişliğini (pulse width) ölç
     pulse_width_us = 0
     start_time = time.time()
-    if pin.wait_for_active(timeout=0.1):
-        if pin.wait_for_inactive(timeout=0.1):
+    
+    # Pinin aktif olmasını bekle (0.01 saniye timeout)
+    if pin.wait_for_active(timeout=0.01):
+        # Pinin pasif olmasını bekle (0.02 saniye timeout)
+        if pin.wait_for_inactive(timeout=0.02):
             end_time = time.time()
             pulse_width_us = (end_time - start_time) * 1000000
 
@@ -142,11 +140,16 @@ while True:
         last_status = current_status
     
     # Kamera görüntüsünü sürekli işle
+    ok, frame = cap.read()
+    if not ok:
+        print("\nKamera okunamadı. Program sonlandırılıyor.")
+        break
+        
     small_frame = cv2.resize(frame, (320, 240))
     h, w = small_frame.shape[:2]
     roi_ratio = 0.7
     x0 = int((1-roi_ratio)/2 * w); x1 = int((1+(roi_ratio))/2 * w)
-    y0 = int((1-roi_ratio)/2 * h); y1 = int((1+(roi_ratio))/2 * h)
+    y0 = int((1-roi_ratio)/2 * h); y1 = int((1+(roi-ratio))/2 * h)
     roi = small_frame[y0:y1, x0:x1]
 
     # Renk tespiti sürekli olarak yapılır.
