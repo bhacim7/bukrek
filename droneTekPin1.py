@@ -99,8 +99,8 @@ def send_mavlink_message(label, conf):
     master.mav.statustext_send(mavutil.mavlink.MAV_SEVERITY_INFO, message.encode())
 
 # --- Ana Döngü ---
-# GPIO düğmesini tanımla. Black Cube sinyali düşük voltajda geldiği için is_pressed ifadesinin tersini alacağız.
-button = Button(TRIGGER_PIN)
+# GPIO düğmesini tanımla. Yüzen pin sorununu gidermek için pull_up=False ve pull_down=True kullanıyoruz.
+button = Button(TRIGGER_PIN, pull_up=False, pull_down=True)
 
 last_detected_color = "BELIRSIZ"
 last_detected_conf = 0.0
@@ -137,9 +137,7 @@ while True:
         last_detected_color = current_color
         last_detected_conf = current_conf
 
-    # is_pressed, standart olarak düşük sinyalde basılı kabul eder.
-    # Bizim mantığımız ise tam tersi olduğu için NOT operatörü kullanıyoruz.
-    is_triggered = not button.is_pressed
+    is_triggered = button.is_pressed
     if is_triggered:
         send_mavlink_message(last_detected_color, last_detected_conf)
 
