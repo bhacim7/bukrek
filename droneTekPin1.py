@@ -99,8 +99,8 @@ def send_mavlink_message(label, conf):
     master.mav.statustext_send(mavutil.mavlink.MAV_SEVERITY_INFO, message.encode())
 
 # --- Ana Döngü ---
-# GPIO düğmesini tanımla.
-button = Button(TRIGGER_PIN)
+# GPIO düğmesini tanımla. pull_up=False ile iç direnci devre dışı bırakıyoruz.
+button = Button(TRIGGER_PIN, pull_up=False)
 
 last_detected_color = "BELIRSIZ"
 last_detected_conf = 0.0
