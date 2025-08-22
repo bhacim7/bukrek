@@ -7,36 +7,38 @@ from pymavlink import mavutil
 import os
 from gpiozero import DigitalInputDevice
 
-# --- GPIO ve Telemetri Ayarları ---
-# Düğmenin bağlı olduğu Raspberry Pi GPIO pinini BCM numarasıyla ayarlayın.
+# --- GPIO and Telemetry Settings ---
+# Set the Raspberry Pi GPIO pin number for the button.
+# For example, use 17 for GPIO 17.
 TRIGGER_PIN = 17
 
-# MAVLink bağlantısı için seri portu ayarlayın.
+# Set the serial port for MAVLink connection.
 TELEMETRY_PORT = "/dev/ttyUSB0"
-TELEMETRY_BAUD = 57600 
+TELEMETRY_BAUD = 57600
 
-# MAVLink bağlantısını oluştur. Hata durumunda kodun çalışmasını durdurmaz.
+# Create MAVLink connection. Does not stop the code from running in case of an error.
 master = None
 try:
     master = mavutil.mavlink_connection(TELEMETRY_PORT, baud=TELEMETRY_BAUD)
-    print("MAVLink bağlantısı bekleniyor...")
+    print("Waiting for MAVLink connection...")
     master.wait_heartbeat(timeout=5)
-    print("MAVLink bağlantısı başarıyla kuruldu.")
+    print("MAVLink connection established successfully.")
 except Exception as e:
-    print(f"MAVLink bağlantısı başarısız oldu: {e}")
+    print(f"MAVLink connection failed: {e}")
     master = None
 
-# --- Kamera ve Görüntü Ayarları ---
+# --- Camera and Image Settings ---
+# Note: Used only for color detection, the image is not displayed.
 cap = cv2.VideoCapture(0)
 cap.set(cv2.CAP_PROP_AUTO_WB, 1)
 cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-# Ortama göre bu değişkeni True/False olarak ayarlayın
-USE_OUTDOOR = False 
+# Adjust this variable to True/False according to the environment
+USE_OUTDOOR = False
 
-# Sizin daha iyi sonuç aldığınız renk aralıklarını kullanıyoruz
+# Using your preferred color ranges
 if USE_OUTDOOR:
     lower_red1, upper_red1 = (0, 140, 110), (10, 255, 255)
     lower_red2, upper_red2 = (170, 140, 110), (179, 255, 255)
@@ -51,13 +53,13 @@ else:
 kernel = np.ones((5,5), np.uint8)
 
 def clean(mask):
-    """Morfolojik işlemlerle (açma ve kapatma) gürültüyü temizler."""
+    """Performs morphological operations (opening and closing) to clean noise."""
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
     return mask
 
 def detect_color(roi):
-    """ROI'deki en baskın rengi (Siyah, Kırmızı, Yeşil veya Belirsiz) tespit eder."""
+    """Detects the most dominant color (Black, Red, Green or Undefined) in the ROI."""
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
     
     mask_red = cv2.inRange(hsv, lower_red1, upper_red1) + cv2.inRange(hsv, lower_red2, upper_red2)
@@ -90,19 +92,28 @@ def detect_color(roi):
         return "BELIRSIZ", 0.0
 
 def send_mavlink_message(label, conf):
-    """Tespit edilen renk ve güvenilirlik ile MAVLink STATUSTEXT mesajı gönderir."""
+    """Sends a MAVLink STATUSTEXT message with the detected color and confidence."""
     if master is None:
         return
-    message = f"Tespit Edilen: {label} (Guven: {conf:.2f})"
+    message = f"Detected: {label} (Confidence: {conf:.2f})"
     master.mav.statustext_send(mavutil.mavlink.MAV_SEVERITY_INFO, message.encode())
 
-# --- Ana Döngü ---
-# Pin olaylarını işlemek için küresel değişkenler
+# --- Main Loop ---
+# Global variables to handle pin events
 global pulse_width_us, pulse_start_time
 pulse_width_us = 0.0
 pulse_start_time = 0.0
 
-# Pin olay işleyicileri
+# Timer variables for state management
+ACTIVATION_THRESHOLD = 1500
+DEACTIVATION_THRESHOLD = 1500
+TIMER_THRESHOLD = 2.0  # 2 seconds
+active_start_time = None
+idle_start_time = time.time()
+current_status = "Boşta"
+last_status = "Boşta"
+
+# Pin event handlers
 def pin_activated():
     global pulse_start_time
     pulse_start_time = time.time()
@@ -118,35 +129,42 @@ pin.when_deactivated = pin_deactivated
 
 last_detected_color = "BELIRSIZ"
 last_detected_conf = 0.0
-last_status = "Boşta"
 
-# Terminali temizle ve başlık yazdır
+# Clear the terminal and print the header
 def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
 
 clear_screen()
 print("-------------------------------------")
-print("  Canlı Renk Tespiti ve Durum Ekranı  ")
+print(" Live Color Detection and Status Screen ")
 print("-------------------------------------")
-print(f"RC Tetikleme Pini: GPIO {TRIGGER_PIN}")
+print(f"RC Trigger Pin: GPIO {TRIGGER_PIN}")
 
 try:
     while True:
-        # Sinyal genişliğine göre durumu belirle
-        is_triggered = False
-        if pulse_width_us > 1500 and pulse_width_us < 2500: # Üst sınır ekleniyor
-            is_triggered = True
-            current_status = "AKTİF"
+        # Check for state changes with a timer
+        if pulse_width_us > ACTIVATION_THRESHOLD:
+            if active_start_time is None:
+                active_start_time = time.time()
+            # If the signal has been consistently high for the threshold time
+            if time.time() - active_start_time >= TIMER_THRESHOLD:
+                current_status = "AKTİF"
+                idle_start_time = None
         else:
-            current_status = "Boşta"
-        
+            active_start_time = None
+            if idle_start_time is None:
+                idle_start_time = time.time()
+            # If the signal has been consistently low for the threshold time
+            if time.time() - idle_start_time >= TIMER_THRESHOLD:
+                current_status = "Boşta"
+                
         if current_status != last_status:
             last_status = current_status
         
-        # Kamera görüntüsünü sürekli işle
+        # Continuously process camera image
         ok, frame = cap.read()
         if not ok:
-            print("\nKamera okunamadı. Program sonlandırılıyor.")
+            print("\nCamera could not be read. Terminating program.")
             break
             
         small_frame = cv2.resize(frame, (320, 240))
@@ -158,37 +176,37 @@ try:
         y1 = int((1+roi_ratio)/2 * h)
         roi = small_frame[y0:y1, x0:x1]
 
-        # Renk tespiti sürekli olarak yapılır.
+        # Color detection is performed continuously.
         current_color, current_conf = detect_color(roi)
         
-        # Sadece tespit değiştiğinde güncellemeyi göster
+        # Update display only if the detection changes
         if current_color != last_detected_color:
             last_detected_color = current_color
             last_detected_conf = current_conf
 
-        if is_triggered:
+        if current_status == "AKTİF":
             send_mavlink_message(last_detected_color, last_detected_conf)
 
-        # Terminali temizle ve yeni durumu yazdır
+        # Clear the terminal and print the new status
         print("\033[H\033[J")
         print("-------------------------------------")
-        print("  Canlı Renk Tespiti ve Durum Ekranı  ")
+        print(" Live Color Detection and Status Screen ")
         print("-------------------------------------")
-        print(f"Son Tespit Edilen Renk: {last_detected_color}")
-        print(f"Güvenilirlik Oranı: {last_detected_conf:.3f}")
-        print(f"RC Tetikleme Pini: GPIO {TRIGGER_PIN}")
-        print(f"Sinyal Genişliği (µs): {pulse_width_us:.2f}")
+        print(f"Last Detected Color: {last_detected_color}")
+        print(f"Confidence: {last_detected_conf:.3f}")
+        print(f"RC Trigger Pin: GPIO {TRIGGER_PIN}")
+        print(f"Pulse Width (µs): {pulse_width_us:.2f}")
         
         if master:
-            print(f"MAVLink Bağlantısı: OK ({TELEMETRY_PORT})")
+            print(f"MAVLink Connection: OK ({TELEMETRY_PORT})")
         else:
-            print(f"MAVLink Bağlantısı: HATA")
+            print(f"MAVLink Connection: ERROR")
 
-        print(f"\nRC Tetikleme Durumu: {current_status}")
+        print(f"\nRC Trigger Status: {current_status}")
 
         time.sleep(0.01)
 
 except KeyboardInterrupt:
-    print("\nProgram kullanıcı tarafından sonlandırıldı.")
+    print("\nProgram terminated by user.")
 finally:
     cap.release()
