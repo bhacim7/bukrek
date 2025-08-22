@@ -6,6 +6,16 @@ import numpy as np
 import serial
 import time
 from pymavlink import mavutil
+import logging
+
+# --- Logging Ayarları ---
+# (Logging Settings)
+LOG_FILE = "detection_log.txt"
+logging.basicConfig(
+    filename=LOG_FILE,
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 # --- Seri Port ve Telemetri Ayarları ---
 # (Serial Port and Telemetry Settings)
@@ -126,14 +136,12 @@ def send_mavlink_message(label, conf):
     (Sends a MAVLink STATUSTEXT message with the detected color and confidence.)
     """
     if master is None:
-        print("MAVLink bağlantısı yok, mesaj gönderilmiyor.")
-        print("No MAVLink connection, message is not being sent.")
+        logging.warning("MAVLink bağlantısı yok, mesaj gönderilmiyor.")
         return
     
     message = f"Tespit Edilen: {label} (Guven: {conf:.2f})"
     master.mav.statustext_send(mavutil.mavlink.MAV_SEVERITY_INFO, message.encode())
-    print(f"MAVLink mesajı gönderildi: {message}")
-    print(f"MAVLink message sent: {message}")
+    logging.info(f"MAVLink mesajı gönderildi: {message}")
 
 # --- Ana Döngü ---
 # (Main Loop)
@@ -141,24 +149,31 @@ ser = None
 try:
     ser = serial.Serial(RC_SERIAL_PORT, baudrate=BAUD_RATE, timeout=0.1)
     print("RC Seri portu açıldı.")
-    print("RC Serial port opened.")
+    logging.info("RC Seri portu açıldı.")
 except serial.SerialException as e:
     print(f"RC Seri portu hatası: {e}")
-    print(f"RC Serial port error: {e}")
+    logging.error(f"RC Seri portu hatası: {e}")
     ser = None
 except FileNotFoundError:
     print(f"RC Seri portu bulunamadı: {RC_SERIAL_PORT}")
-    print(f"RC Serial port not found: {RC_SERIAL_PORT}")
+    logging.error(f"RC Seri portu bulunamadı: {RC_SERIAL_PORT}")
     ser = None
 
 last_detected_color = "BELIRSIZ"
 last_detected_conf = 0.0
 
+# Log dosyasına başlık yazdır
+logging.info("--- Renk Tespiti Logu Başladı ---")
+logging.info("------------------------------------")
+logging.info("Renk | Güvenilirlik")
+logging.info("------------------------------------")
+
+
 while True:
     ok, frame = cap.read()
     if not ok:
-        print("Kamera okunamadı.")
-        print("Camera could not be read.")
+        print("Kamera okunamadı. Program sonlandırılıyor.")
+        logging.critical("Kamera okunamadı. Program sonlandırılıyor.")
         break
 
     # Kamera görüntüsünü sürekli işle
@@ -170,11 +185,14 @@ while True:
     y0 = int((1-roi_ratio)/2 * h); y1 = int((1+(roi_ratio))/2 * h)
     roi = small_frame[y0:y1, x0:x1]
 
-    # Renk tespiti sürekli olarak yapılır.
-    # (Color detection is performed continuously.)
+    # Renk tespiti sürekli olarak yapılır ve log dosyasına yazılır.
+    # (Color detection is performed continuously and written to the log file.)
     last_detected_color, last_detected_conf = detect_color(roi)
-    print(f"Sürekli Tespit: Renk={last_detected_color}, Güven={last_detected_conf:.3f}")
-    print(f"Continuous Detection: Color={last_detected_color}, Confidence={last_detected_conf:.3f}")
+    
+    # Sadece tespit değiştiğinde loga yaz
+    if last_detected_color != last_detected_color:
+        logging.info(f"{last_detected_color} | {last_detected_conf:.3f}")
+
 
     is_triggered = False
     if ser:
@@ -189,13 +207,11 @@ while True:
                     is_triggered = True
 
         except serial.SerialException as e:
-            print(f"Seri okuma hatası: {e}")
-            print(f"Serial read error: {e}")
+            logging.error(f"Seri okuma hatası: {e}")
             ser.close()
             ser = None
         except Exception as e:
-            print(f"RC sinyal işleme hatası: {e}")
-            print(f"RC signal processing error: {e}")
+            logging.error(f"RC sinyal işleme hatası: {e}")
 
     # Sadece RC kanalı tetiklendiğinde telemetri mesajı gönderilir.
     # (Telemetry message is sent only when the RC channel is triggered.)
