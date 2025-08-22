@@ -14,7 +14,7 @@ TRIGGER_PIN = 17
 
 # MAVLink bağlantısı için seri portu ayarlayın.
 TELEMETRY_PORT = "/dev/ttyUSB0"
-TELEMETRY_BAUD = 57600 
+TELEMETRY_BAUD = 56000 
 
 # MAVLink bağlantısını oluştur. Hata durumunda kodun çalışmasını durdurmaz.
 master = None
@@ -148,8 +148,10 @@ while True:
     small_frame = cv2.resize(frame, (320, 240))
     h, w = small_frame.shape[:2]
     roi_ratio = 0.7
-    x0 = int((1-roi_ratio)/2 * w); x1 = int((1+(roi_ratio))/2 * w)
-    y0 = int((1-roi_ratio)/2 * h); y1 = int((1+(roi-ratio))/2 * h)
+    x0 = int((1-roi_ratio)/2 * w)
+    x1 = int((1+roi_ratio)/2 * w)
+    y0 = int((1-roi_ratio)/2 * h)
+    y1 = int((1+roi_ratio)/2 * h)
     roi = small_frame[y0:y1, x0:x1]
 
     # Renk tespiti sürekli olarak yapılır.
