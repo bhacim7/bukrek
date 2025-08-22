@@ -99,8 +99,8 @@ def send_mavlink_message(label, conf):
     master.mav.statustext_send(mavutil.mavlink.MAV_SEVERITY_INFO, message.encode())
 
 # --- Ana Döngü ---
-# GPIO düğmesini tanımla. Black Cube sinyali yüksek voltajda geldiği için active_state='HIGH' kullanıyoruz.
-button = Button(TRIGGER_PIN, pull_up=False, active_state='HIGH')
+# GPIO düğmesini tanımla. Black Cube sinyali yüksek voltajda geldiği için active_high=True kullanıyoruz.
+button = Button(TRIGGER_PIN, active_high=True)
 
 last_detected_color = "BELIRSIZ"
 last_detected_conf = 0.0
