@@ -102,17 +102,6 @@ def send_mavlink_message(label, conf):
 # GPIO pinini en temel haliyle giriş olarak ayarla.
 pin = DigitalInputDevice(TRIGGER_PIN)
 
-# Sinyal genişliğini daha güvenilir ölçmek için yardımcı fonksiyon
-def get_pulse_width(pin, timeout=0.02):
-    start_time = time.time()
-    
-    # HIGH sinyalini bekle
-    if pin.wait_for_active(timeout=timeout):
-        # LOW sinyalini bekle
-        if pin.wait_for_inactive(timeout=timeout):
-            return (time.time() - start_time) * 1000000
-    return 0
-
 last_detected_color = "BELIRSIZ"
 last_detected_conf = 0.0
 last_status = "Boşta"
@@ -127,9 +116,19 @@ print("  Canlı Renk Tespiti ve Durum Ekranı  ")
 print("-------------------------------------")
 print(f"RC Tetikleme Pini: GPIO {TRIGGER_PIN}")
 
+# Sinyal genişliğini ölçmek için daha kararlı bir fonksiyon
+def get_reliable_pulse_width(pin, timeout=0.03):
+    start_time = time.time()
+    # Pinin HIGH olmasını bekle
+    if pin.wait_for_active(timeout=timeout):
+        # Pinin LOW olmasını bekle
+        if pin.wait_for_inactive(timeout=timeout):
+            return (time.time() - start_time) * 1000000
+    return 0
+
 while True:
     # Sinyal genişliğini (pulse width) ölç
-    pulse_width_us = get_pulse_width(pin)
+    pulse_width_us = get_reliable_pulse_width(pin)
 
     # Sinyal genişliğine göre durumu belirle
     is_triggered = False
