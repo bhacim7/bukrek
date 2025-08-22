@@ -1,49 +1,43 @@
 # -*- coding: utf-8 -*-
 # Gerekli kütüphaneleri içe aktar
-import RPi.GPIO as GPIO
+from gpiozero import DigitalInputDevice
 import time
+import os
 
 # GPIO pinini BCM numarasına göre ayarlayın.
 TRIGGER_PIN = 17
 
-# GPIO modunu BCM olarak ayarla
-GPIO.setmode(GPIO.BCM)
-
-# Pini giriş olarak ayarla ve pull-down direncini aktifleştir.
-# Bu, pinin boşta kalmasını engeller.
-GPIO.setup(TRIGGER_PIN, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+# GPIO pinini giriş olarak ayarla
+# pull_down=True ile pinin boşta iken kararlı bir şekilde LOW kalmasını sağla
+pin = DigitalInputDevice(TRIGGER_PIN, pull_down=True)
 
 # Terminali temizle ve başlık yazdır
 def clear_screen():
-    import os
     os.system('cls' if os.name == 'nt' else 'clear')
 
 clear_screen()
 print("-------------------------------------")
-print("  GPIO Sinyal Genişliği Testi  ")
+print("  GPIO Sinyal Genişliği Testi (gpiozero)  ")
 print("-------------------------------------")
 print(f"Sinyal Ölçümü Yapılıyor: GPIO {TRIGGER_PIN}")
 print("Kumanda tetikleyicisini değiştirin ve değerleri gözlemleyin...")
+print("(Değer yoksa kumanda tetiklenmiyor veya bağlantı sorunu var)")
 
 try:
     while True:
-        # Pinin LOW seviyesine düşmesini bekle
-        GPIO.wait_for_edge(TRIGGER_PIN, GPIO.FALLING, timeout=0.5)
-        
-        # Sinyal HIGH olduğunda başlangıç zamanını kaydet
+        # Pinin HIGH olmasını bekle ve süreyi ölç
         start_time = time.time()
+        pin.wait_for_active(timeout=0.5)
         
-        # Pinin HIGH seviyesine çıkmasını bekle
-        GPIO.wait_for_edge(TRIGGER_PIN, GPIO.RISING, timeout=0.5)
-        
-        # Sinyal LOW olduğunda bitiş zamanını kaydet
+        # Pinin LOW olmasını bekle ve süreyi bitir
         end_time = time.time()
+        pin.wait_for_inactive(timeout=0.5)
         
         # Sinyal genişliğini mikrosaniye cinsinden hesapla
-        pulse_width_ms = (end_time - start_time) * 1000000
+        pulse_width_us = (end_time - start_time) * 1000000
         
         # Ekrana bas
-        print(f"Sinyal Genişliği: {pulse_width_ms:.2f} µs")
+        print(f"Sinyal Genişliği: {pulse_width_us:.2f} µs")
         
         # 0.1 saniye bekle ve tekrarla
         time.sleep(0.1)
@@ -52,6 +46,6 @@ except KeyboardInterrupt:
     print("\nProgram kullanıcı tarafından sonlandırıldı.")
 
 finally:
-    # GPIO pinlerini temizle
-    GPIO.cleanup()
-
+    # GPIO pinini temizle
+    pin.close()
+    
