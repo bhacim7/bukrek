@@ -99,8 +99,8 @@ def send_mavlink_message(label, conf):
     master.mav.statustext_send(mavutil.mavlink.MAV_SEVERITY_INFO, message.encode())
 
 # --- Ana Döngü ---
-# GPIO düğmesini tanımla. Yüzen pin sorununu gidermek için pull_up=False ve pull_down=True kullanıyoruz.
-button = Button(TRIGGER_PIN, pull_up=False, pull_down=True)
+# GPIO düğmesini en temel haliyle tanımla. Sadece pini dinleyeceğiz.
+button = Button(TRIGGER_PIN)
 
 last_detected_color = "BELIRSIZ"
 last_detected_conf = 0.0
@@ -137,7 +137,9 @@ while True:
         last_detected_color = current_color
         last_detected_conf = current_conf
 
-    is_triggered = button.is_pressed
+    # is_triggered durumunu button.value ile kontrol et
+    # Pin voltajı yüksekse (HIGH), tetiklenmiş kabul et.
+    is_triggered = button.value == 1
     if is_triggered:
         send_mavlink_message(last_detected_color, last_detected_conf)
 
