@@ -14,7 +14,7 @@ TRIGGER_PIN = 17
 
 # MAVLink bağlantısı için seri portu ayarlayın.
 TELEMETRY_PORT = "/dev/ttyUSB0"
-TELEMETRY_BAUD = 56000 
+TELEMETRY_BAUD = 57600 
 
 # MAVLink bağlantısını oluştur. Hata durumunda kodun çalışmasını durdurmaz.
 master = None
@@ -102,6 +102,17 @@ def send_mavlink_message(label, conf):
 # GPIO pinini en temel haliyle giriş olarak ayarla.
 pin = DigitalInputDevice(TRIGGER_PIN)
 
+# Sinyal genişliğini daha güvenilir ölçmek için yardımcı fonksiyon
+def get_pulse_width(pin, timeout=0.02):
+    start_time = time.time()
+    
+    # HIGH sinyalini bekle
+    if pin.wait_for_active(timeout=timeout):
+        # LOW sinyalini bekle
+        if pin.wait_for_inactive(timeout=timeout):
+            return (time.time() - start_time) * 1000000
+    return 0
+
 last_detected_color = "BELIRSIZ"
 last_detected_conf = 0.0
 last_status = "Boşta"
@@ -118,15 +129,7 @@ print(f"RC Tetikleme Pini: GPIO {TRIGGER_PIN}")
 
 while True:
     # Sinyal genişliğini (pulse width) ölç
-    pulse_width_us = 0
-    start_time = time.time()
-    
-    # Pinin aktif olmasını bekle (0.01 saniye timeout)
-    if pin.wait_for_active(timeout=0.01):
-        # Pinin pasif olmasını bekle (0.02 saniye timeout)
-        if pin.wait_for_inactive(timeout=0.02):
-            end_time = time.time()
-            pulse_width_us = (end_time - start_time) * 1000000
+    pulse_width_us = get_pulse_width(pin)
 
     # Sinyal genişliğine göre durumu belirle
     is_triggered = False
