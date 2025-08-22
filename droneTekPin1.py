@@ -5,7 +5,7 @@ import numpy as np
 import time
 from pymavlink import mavutil
 import os
-from gpiozero import Button
+from gpiozero import DigitalInputDevice
 
 # --- GPIO ve Telemetri Ayarları ---
 # Düğmenin bağlı olduğu Raspberry Pi GPIO pinini BCM numarasıyla ayarlayın.
@@ -99,11 +99,12 @@ def send_mavlink_message(label, conf):
     master.mav.statustext_send(mavutil.mavlink.MAV_SEVERITY_INFO, message.encode())
 
 # --- Ana Döngü ---
-# GPIO düğmesini en temel haliyle tanımla. Sadece pini dinleyeceğiz.
-button = Button(TRIGGER_PIN)
+# GPIO pinini en temel haliyle giriş olarak ayarla.
+pin = DigitalInputDevice(TRIGGER_PIN)
 
 last_detected_color = "BELIRSIZ"
 last_detected_conf = 0.0
+last_status = "Boşta"
 
 # Terminali temizle ve başlık yazdır
 def clear_screen():
@@ -121,6 +122,25 @@ while True:
         print("\nKamera okunamadı. Program sonlandırılıyor.")
         break
 
+    # Sinyal genişliğini (pulse width) ölç
+    pulse_width_us = 0
+    start_time = time.time()
+    if pin.wait_for_active(timeout=0.1):
+        if pin.wait_for_inactive(timeout=0.1):
+            end_time = time.time()
+            pulse_width_us = (end_time - start_time) * 1000000
+
+    # Sinyal genişliğine göre durumu belirle
+    is_triggered = False
+    if pulse_width_us > 1500:
+        is_triggered = True
+        current_status = "AKTİF"
+    else:
+        current_status = "Boşta"
+    
+    if current_status != last_status:
+        last_status = current_status
+    
     # Kamera görüntüsünü sürekli işle
     small_frame = cv2.resize(frame, (320, 240))
     h, w = small_frame.shape[:2]
@@ -137,9 +157,6 @@ while True:
         last_detected_color = current_color
         last_detected_conf = current_conf
 
-    # is_triggered durumunu button.value ile kontrol et
-    # Pin voltajı yüksekse (HIGH), tetiklenmiş kabul et.
-    is_triggered = button.value == 1
     if is_triggered:
         send_mavlink_message(last_detected_color, last_detected_conf)
 
@@ -151,17 +168,15 @@ while True:
     print(f"Son Tespit Edilen Renk: {last_detected_color}")
     print(f"Güvenilirlik Oranı: {last_detected_conf:.3f}")
     print(f"RC Tetikleme Pini: GPIO {TRIGGER_PIN}")
+    print(f"Sinyal Genişliği (µs): {pulse_width_us:.2f}")
     
     if master:
         print(f"MAVLink Bağlantısı: OK ({TELEMETRY_PORT})")
     else:
         print(f"MAVLink Bağlantısı: HATA")
 
-    if is_triggered:
-        print("\nRC Tetikleme Durumu: AKTİF")
-    else:
-        print("\nRC Tetikleme Durumu: Boşta")
+    print(f"\nRC Tetikleme Durumu: {current_status}")
 
-    time.sleep(0.1)
+    time.sleep(0.01)
 
 cap.release()
