@@ -5,12 +5,14 @@ import numpy as np
 import time
 from pymavlink import mavutil
 import os
-from gpiozero import DigitalInputDevice
+import RPi.GPIO as GPIO
 
 # --- GPIO ve Telemetri Ayarları ---
 # Düğmenin bağlı olduğu Raspberry Pi GPIO pinini BCM numarasıyla ayarlayın.
-# Örneğin, GPIO 17 için 17 yazın.
+# ÖNEMLİ: Bu kod RPi.GPIO kütüphanesini kullanır. Pin numarası BCM modunda 17'dir.
 TRIGGER_PIN = 17
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(TRIGGER_PIN, GPIO.IN)
 
 # MAVLink bağlantısı için seri portu ayarlayın.
 TELEMETRY_PORT = "/dev/ttyUSB0"
@@ -99,9 +101,6 @@ def send_mavlink_message(label, conf):
     master.mav.statustext_send(mavutil.mavlink.MAV_SEVERITY_INFO, message.encode())
 
 # --- Ana Döngü ---
-# GPIO pinini en temel haliyle giriş olarak ayarla.
-pin = DigitalInputDevice(TRIGGER_PIN)
-
 last_detected_color = "BELIRSIZ"
 last_detected_conf = 0.0
 last_status = "Boşta"
@@ -116,79 +115,84 @@ print("  Canlı Renk Tespiti ve Durum Ekranı  ")
 print("-------------------------------------")
 print(f"RC Tetikleme Pini: GPIO {TRIGGER_PIN}")
 
-# Sinyal genişliğini ölçmek için daha kararlı bir fonksiyon
-def get_reliable_pulse_width(pin, timeout=0.03):
-    start_time = time.time()
-    # Pinin HIGH olmasını bekle
-    if pin.wait_for_active(timeout=timeout):
-        # Pinin LOW olmasını bekle
-        if pin.wait_for_inactive(timeout=timeout):
-            pulse_width = (time.time() - start_time) * 1000000
-            # Sinyal genişliğini absürt değerlerden korumak için bir üst limit belirle
-            if pulse_width > 3000:
-                print("UYARI: Sinyal genişliği beklenenden çok yüksek. Bağlantıyı kontrol edin!")
-                return 0
-            return pulse_width
-    return 0
-
-while True:
-    # Sinyal genişliğini (pulse width) ölç
-    pulse_width_us = get_reliable_pulse_width(pin)
-
-    # Sinyal genişliğine göre durumu belirle
-    is_triggered = False
-    if pulse_width_us > 1500:
-        is_triggered = True
-        current_status = "AKTİF"
-    else:
-        current_status = "Boşta"
-    
-    if current_status != last_status:
-        last_status = current_status
-    
-    # Kamera görüntüsünü sürekli işle
-    ok, frame = cap.read()
-    if not ok:
-        print("\nKamera okunamadı. Program sonlandırılıyor.")
-        break
+try:
+    while True:
+        # Sinyal genişliğini (pulse width) ölçmek için manuel döngü
+        pulse_width_us = 0
+        start_time = 0
         
-    small_frame = cv2.resize(frame, (320, 240))
-    h, w = small_frame.shape[:2]
-    roi_ratio = 0.7
-    x0 = int((1-roi_ratio)/2 * w)
-    x1 = int((1+roi_ratio)/2 * w)
-    y0 = int((1-roi_ratio)/2 * h)
-    y1 = int((1+roi_ratio)/2 * h)
-    roi = small_frame[y0:y1, x0:x1]
+        # Pinin LOW seviyeye düşmesini bekle
+        while GPIO.input(TRIGGER_PIN) == GPIO.HIGH:
+            pass
+        
+        # Pinin HIGH seviyeye çıkmasını bekle ve zamanı kaydet
+        while GPIO.input(TRIGGER_PIN) == GPIO.LOW:
+            pass
+        start_time = time.time()
+        
+        # Pinin LOW seviyeye geri dönmesini bekle ve zamanı kaydet
+        while GPIO.input(TRIGGER_PIN) == GPIO.HIGH:
+            pass
+        pulse_width_us = (time.time() - start_time) * 1000000
 
-    # Renk tespiti sürekli olarak yapılır.
-    current_color, current_conf = detect_color(roi)
-    
-    # Sadece tespit değiştiğinde güncellemeyi göster
-    if current_color != last_detected_color:
-        last_detected_color = current_color
-        last_detected_conf = current_conf
+        # Sinyal genişliğine göre durumu belirle
+        is_triggered = False
+        if pulse_width_us > 1500:
+            is_triggered = True
+            current_status = "AKTİF"
+        else:
+            current_status = "Boşta"
+        
+        if current_status != last_status:
+            last_status = current_status
+        
+        # Kamera görüntüsünü sürekli işle
+        ok, frame = cap.read()
+        if not ok:
+            print("\nKamera okunamadı. Program sonlandırılıyor.")
+            break
+            
+        small_frame = cv2.resize(frame, (320, 240))
+        h, w = small_frame.shape[:2]
+        roi_ratio = 0.7
+        x0 = int((1-roi_ratio)/2 * w)
+        x1 = int((1+roi_ratio)/2 * w)
+        y0 = int((1-roi_ratio)/2 * h)
+        y1 = int((1+roi_ratio)/2 * h)
+        roi = small_frame[y0:y1, x0:x1]
 
-    if is_triggered:
-        send_mavlink_message(last_detected_color, last_detected_conf)
+        # Renk tespiti sürekli olarak yapılır.
+        current_color, current_conf = detect_color(roi)
+        
+        # Sadece tespit değiştiğinde güncellemeyi göster
+        if current_color != last_detected_color:
+            last_detected_color = current_color
+            last_detected_conf = current_conf
 
-    # Terminali temizle ve yeni durumu yazdır
-    print("\033[H\033[J")
-    print("-------------------------------------")
-    print("  Canlı Renk Tespiti ve Durum Ekranı  ")
-    print("-------------------------------------")
-    print(f"Son Tespit Edilen Renk: {last_detected_color}")
-    print(f"Güvenilirlik Oranı: {last_detected_conf:.3f}")
-    print(f"RC Tetikleme Pini: GPIO {TRIGGER_PIN}")
-    print(f"Sinyal Genişliği (µs): {pulse_width_us:.2f}")
-    
-    if master:
-        print(f"MAVLink Bağlantısı: OK ({TELEMETRY_PORT})")
-    else:
-        print(f"MAVLink Bağlantısı: HATA")
+        if is_triggered:
+            send_mavlink_message(last_detected_color, last_detected_conf)
 
-    print(f"\nRC Tetikleme Durumu: {current_status}")
+        # Terminali temizle ve yeni durumu yazdır
+        print("\033[H\033[J")
+        print("-------------------------------------")
+        print("  Canlı Renk Tespiti ve Durum Ekranı  ")
+        print("-------------------------------------")
+        print(f"Son Tespit Edilen Renk: {last_detected_color}")
+        print(f"Güvenilirlik Oranı: {last_detected_conf:.3f}")
+        print(f"RC Tetikleme Pini: GPIO {TRIGGER_PIN}")
+        print(f"Sinyal Genişliği (µs): {pulse_width_us:.2f}")
+        
+        if master:
+            print(f"MAVLink Bağlantısı: OK ({TELEMETRY_PORT})")
+        else:
+            print(f"MAVLink Bağlantısı: HATA")
 
-    time.sleep(0.01)
+        print(f"\nRC Tetikleme Durumu: {current_status}")
 
-cap.release()
+        time.sleep(0.01)
+
+except KeyboardInterrupt:
+    print("\nProgram kullanıcı tarafından sonlandırıldı.")
+finally:
+    cap.release()
+    GPIO.cleanup()
