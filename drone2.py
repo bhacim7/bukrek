@@ -122,6 +122,9 @@ print("-------------------------------------")
 print("  Canlı Renk Tespiti ve Durum Ekranı  ")
 print("-------------------------------------")
 
+# OpenCV penceresini bir kez oluştur
+cv2.namedWindow("Canlı Kamera Görüntüsü", cv2.WINDOW_AUTOSIZE)
+
 while True:
     ok, frame = cap.read()
     if not ok:
@@ -175,7 +178,7 @@ while True:
     if is_triggered:
         cv2.putText(out, "RC Tetikleme: AKTIF!", (20, 120), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
     else:
-        cv2.putText(out, "RC Tetikleme: Boşta", (20, 120), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
+        cv2.putText(out, "RC Tetikleme: Bosta", (20, 120), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
     
     cv2.imshow("Canlı Kamera Görüntüsü", out)
 
