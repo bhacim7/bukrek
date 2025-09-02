@@ -511,11 +511,11 @@ class HavaSavunmaArayuz(QWidget):
 
         # --- PID Kontrol Değişkenleri ---
         # AYARLANDI: Daha hızlı ve daha agresif yanıt için PID kazançları artırıldı.
-        self.KP_YAW = 0.7  # 0.04'ten 0.06'ya yükseltildi
+        self.KP_YAW = 0.8  # 0.04'ten 0.06'ya yükseltildi
         self.KI_YAW = 0.005  # 0.0001'den 0.0002'ye yükseltildi
-        self.KD_YAW = 0.01  # 0.08'den 0.12'ye yükseltildi
+        self.KD_YAW = 0.02  # 0.08'den 0.12'ye yükseltildi
 
-        self.KP_PITCH = 0.6  # 0.04'ten 0.06'ya yükseltildi
+        self.KP_PITCH = 0.7  # 0.04'ten 0.06'ya yükseltildi
         self.KI_PITCH = 0.005  # 0.0001'den 0.0002'ye yükseltildi
         self.KD_PITCH = 0.02  # 0.08'den 0.12'ye yükseltildi
 
