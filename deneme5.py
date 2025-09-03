@@ -25,24 +25,28 @@ try:
 except ImportError:
     TRT_AVAILABLE = False
     print("UYARI: TensorRT veya PyCUDA bulunamadı. Yalnızca ONNX Runtime (CPU/GPU) kullanılabilir olacak.")
-    print("TensorRT kullanmak için 'pip install tensorrt pycuda' komutunu çalıştırdığınızdan ve CUDA/cuDNN kurduğunuzdan emin olun.")
+    print(
+        "TensorRT kullanmak için 'pip install tensorrt pycuda' komutunu çalıştırdığınızdan ve CUDA/cuDNN kurduğunuzdan emin olun.")
 except Exception as e:
     TRT_AVAILABLE = False
     print(f"UYARI: TensorRT/PyCUDA içe aktarma sırasında hata: {e}")
     print("TensorRT veya PyCUDA yanlış kurulmuş olabilir. Yalnızca ONNX Runtime (CPU/GPU) kullanılabilir olacak.")
     traceback.print_exc()
 
-
 # --- YOLOv11 Model Yapılandırması ---
 # DİKKAT: Bu yolu PC'deki best.engine veya best.onnx dosyanızın gerçek yoluyla güncelleyin!
 # Her iki formatı da desteklemek için uzantıyı kontrol edeceğiz.
 YOLO_MODEL_PATH = "C:/Users/user/yolo11/runs/detect/train2/weights/best.engine"  # Veya .onnx
-# Eğer bir .onnx dosyanız varsa ve onu yedek olarak kullanmak istiyorsanız, aynı dizinde olduğundan emin olun.
+# YENİ: Aşama 3 için yeni model yolu
+YOLO_MODEL_PATH_TASK3 = "C:/Users/user/yolo11/runs/detect/train2/weights/best1.engine"
 
 CONF_THRESHOLD = 0.4  # Daha iyi tespit için güven eşiği düşürüldü
 NMS_THRESHOLD = 0.4
 # GÜNCELLEDİ: data.yaml'a dayalı sınıflar
 CLASSES = ['blue_balloon', 'red_balloon']  # data.yaml'dan güncellenmiş sınıflar
+
+# YENİ: Aşama 3 için özel sınıflar
+CLASSES_TASK3 = ['kir_Dai', 'kir_Kar', 'kir_Uc', 'mav_Dai', 'mav_Kar', 'mav_Uc', 'yes_Dai', 'yes_Kar', 'yes_Uc']
 
 # IMG_HEIGHT ve IMG_WIDTH'i varsayılan değerlerle global olarak başlat
 IMG_HEIGHT, IMG_WIDTH = 640, 640  # YOLOv11 için varsayılan
@@ -60,6 +64,9 @@ trt_stream = None
 # YENİ: TensorRT için giriş/çıkış bağlama indekslerini saklamak için global değişkenler
 trt_input_binding_idx = None
 trt_output_binding_idx = None
+# YENİ: Farklı modeller için ayrı değişkenler
+yolo_model_task12 = None
+yolo_model_task3 = None
 
 
 # YOLO modelini yükleme fonksiyonu
@@ -223,25 +230,26 @@ def load_yolo_model(model_path):
         return None
 
 
-# YOLO modeli ve giriş/çıkış detayları (uygulama başlangıcında bir kez yüklenir)
+# --- DÜZELTME 1: Model değişkenlerini daha temiz bir şekilde başlat ---
 # Model yükleme sürecini güncelledik. Artık 'yolo_model' doğrudan bir InferenceSession nesnesi veya "tensorrt" dizesi olabilir.
-yolo_model_type = load_yolo_model(YOLO_MODEL_PATH)
+yolo_model_task12 = load_yolo_model(YOLO_MODEL_PATH)
+# Aşama 3 modeli sadece gerektiğinde yüklenecek şekilde None olarak bırakıldı.
+yolo_model_task3 = None
+
 input_name = None
 output_name = None
 
 # Eğer model TensorRT ise, giriş/çıkış adlarını TensorRT motorundan al
-if yolo_model_type == "tensorrt":
+if yolo_model_task12 == "tensorrt":
     if trt_engine:
-        # Bunlar döngü nedeniyle load_yolo_model içinde doğru bir şekilde ayarlanacaktır
-        # Sadece daha sonra global olarak erişilebilir olduklarından emin olmamız gerekiyor.
-        # Şimdilik, load_yolo_model fonksiyonunda ayarlanmış olmalarına güveniyoruz.
-        # process_yolo_detection fonksiyonu global trt_engine'i kullanacak ve
-        # bağlama adları/şekilleri indekse göre erişilecektir.
-        pass  # Burada yeniden atamaya gerek yok, zaten fonksiyonda halledildi.
+        # Bu değişkenler load_yolo_model içinde zaten ayarlandı.
+        # Burada ek bir işlem yapmaya gerek yok.
+        pass
 else:  # Eğer ONNX Runtime ise
-    if yolo_model_type:
-        input_name = yolo_model_type.get_inputs()[0].name
-        output_name = yolo_model_type.get_outputs()[0].name
+    if yolo_model_task12:
+        # ONNX oturumundan giriş/çıkış adlarını al
+        input_name = yolo_model_task12.get_inputs()[0].name
+        output_name = yolo_model_task12.get_outputs()[0].name
 
 
 class RPiCommunicator(QThread):
@@ -305,7 +313,8 @@ class RPiCommunicator(QThread):
             self.is_connected = True
             self.connection_status_signal.emit(True)
             self.status_update_signal.emit("Durum: Raspberry Pi'ye Bağlandı!")
-            print(f"HATA AYIKLAMA (RPiComm): Raspberry Pi'ye {self.rpi_ip}:{self.rpi_port} üzerinden başarıyla bağlanıldı.")
+            print(
+                f"HATA AYIKLAMA (RPiComm): Raspberry Pi'ye {self.rpi_ip}:{self.rpi_port} üzerinden başarıyla bağlanıldı.")
             # Bağlantıdan sonra RPi'den başlangıç açılarını iste (RPi periyodik olarak gönderdiği için gereksiz olabilir)
             self.command_queue.put({"action": "get_angles"})  # Kuyruğa ekle, iş parçacığı işleyecek
         except socket.error as e:
@@ -478,28 +487,37 @@ class HavaSavunmaArayuz(QWidget):
         # YENİ: Hedef kaybedildiğinde veya yok edildiğinde yeni hedef aramak için zaman damgası
         self.target_lost_time = 0.0
         # YENİ: Hedef kaybedildiğinde yeni hedef aramadan önce ne kadar bekleneceği için zaman aşımı
-        self.target_reacquisition_time = 0.5  # 0.5 saniye bekleme süresi eklendi
+        self.prediction_time_limit = 0.5  # 0.5 saniye bekleme süresi eklendi
 
         self.waiting_for_new_engagement_command = False  # Yeni bir angajman komutu beklenip beklenmediğini gösterir
         self.engagement_home_position_yaw = 0
         self.engagement_home_position_pitch = 0
+        # YENİ: Aşama 3 için QR kodundan okunan dereceleri saklayacak sözlük
+        self.qr_degrees = {}
+        self.current_qr_char = None
         self.active_engagement_target_color = None
         self.active_engagement_target_shape = None
         self.current_tracked_target_class = None  # YENİ: Kilitli hedefin sınıfını saklar
         self.current_tracked_target_bbox = None  # YENİ: Kilitli hedefin sınırlayıcı kutusunu saklar
+        self.is_ready_to_engage_from_qr = False  # YENİ: QR okunduktan sonraki angajman başlangıcı
 
         self.is_aimed_at_target = False  # Genel nişan alma durumu
         self.is_target_active = False  # Genel hedef takip durumu
 
+        # YENİ: Hedefin kaç ardışık karede algılanamadığını takip etmek için
+        self.missing_frames = 0
+        self.MAX_MISSING_FRAMES = 10  # Hedefi tamamen kaybetmeden önceki maksimum kayıp kare sayısı (5'ten 10'a çıkarıldı)
+        self.MAX_REACQUISITION_DISTANCE_PIXELS = 200  # Piksel. Kameranın görüş alanı ve hedef hızına göre ayarlanır. (150'den 200'e çıkarıldı)
+
         # --- PID Kontrol Değişkenleri ---
         # AYARLANDI: Daha hızlı ve daha agresif yanıt için PID kazançları artırıldı.
-        self.KP_YAW = 0.5  # 0.04'ten 0.06'ya yükseltildi
-        self.KI_YAW = 0.002  # 0.0001'den 0.0002'ye yükseltildi
-        self.KD_YAW = 0.03  # 0.08'den 0.12'ye yükseltildi
+        self.KP_YAW = 0.8  # 0.04'ten 0.06'ya yükseltildi
+        self.KI_YAW = 0.005  # 0.0001'den 0.0002'ye yükseltildi
+        self.KD_YAW = 0.02  # 0.08'den 0.12'ye yükseltildi
 
-        self.KP_PITCH = 0.45  # 0.04'ten 0.06'ya yükseltildi
-        self.KI_PITCH = 0.0002  # 0.0001'den 0.0002'ye yükseltildi
-        self.KD_PITCH = 0.01  # 0.08'den 0.12'ye yükseltildi
+        self.KP_PITCH = 0.7  # 0.04'ten 0.06'ya yükseltildi
+        self.KI_PITCH = 0.005  # 0.0001'den 0.0002'ye yükseltildi
+        self.KD_PITCH = 0.02  # 0.08'den 0.12'ye yükseltildi
 
         self.pid_update_time = time.time()
         self.integral_yaw = 0.0  # PID integral terimi başlatıldı
@@ -516,25 +534,28 @@ class HavaSavunmaArayuz(QWidget):
         self.last_frame_time = None
         self.last_target_velocity_x = 0.0  # Hedefin son bilinen X hızı (piksel/saniye)
         self.last_target_velocity_y = 0.0  # Hedefin son bilinen Y hızı (piksel/saniye)
-        self.prediction_time_limit = 0.5  # Hedef kaybedildiğinde ne kadar süre tahmin edileceği (saniye)
+        # self.prediction_time_limit = 0.5  # Bu artık MAX_MISSING_FRAMES ile birlikte kullanılacak
 
-        self.feedforward_yaw_gain = 0.4  # Devre dışı bırakmak için 0.0 olarak ayarla
-        self.feedforward_pitch_gain = 0.4  # Devre dışı bırakmak için 0.0 olarak ayarla
+        self.feedforward_yaw_gain = 0.1  # Devre dışı bırakmak için 0.0 olarak ayarla
+        self.feedforward_pitch_gain = 0.1  # Devre dışı bırakmak için 0.0 olarak ayarla
 
-        self.feedforward_velocity_threshold_px_s = 35.0
+        # YENİ EKLEDİM HAREKETLİ SİSTEMDE YUMUŞATMA ANİ DÖNÜŞLER İÇİN
+        self.velocity_smoothing_factor = 0.6
+
+        self.feedforward_velocity_threshold_px_s = 10.0
 
         # AYARLANDI: PID Çıkış Limiti (daha hızlı yanıt için daha geniş aralık)
-        self.MAX_OUTPUT_DEGREE = 3.0  # 2.0'dan 3.0'a yükseltildi, daha büyük düzeltmeler için
+        self.MAX_OUTPUT_DEGREE = 30.0  # 2.0'dan 3.0'a yükseltildi, daha büyük düzeltmeler için
 
-        # AYARLANDI: Minimum hareket eşiği (PID çıkışı bunun altındaysa, hareket yok)
+        # AYARLANDI: Minimum hareket eşiği (PID çıktısı bunun altındaysa, hareket yok)
         self.MIN_OUTPUT_DEGREE_THRESHOLD = 0.01  # 0.03'ten 0.01'e düşürüldü, daha ince hareketlere izin vermek için
 
         # DERECE_BAŞINA_PİKSEL_YAW ve DERECE_BAŞINA_PİKSEL_PITCH işaretleri kontrol edildi.
-        self.DEGREES_PER_PIXEL_YAW = 0.03
-        self.DEGREES_PER_PIXEL_PITCH = -0.03
+        self.DEGREES_PER_PIXEL_YAW = 0.02
+        self.DEGREES_PER_PIXEL_PITCH = -0.02
 
         # AYARLANDI: PID çıkışı için ölü bant (hata bunun altındaysa, PID çıkışı 0 olur)
-        self.pid_output_deadband_degree = 0.01  # 0.02'den 0.01'e düşürüldü, daha hassas kilitleme için
+        self.pid_output_deadband_degree = 0.025  # 0.02'den 0.01'e düşürüldü, daha hassas kilitleme için
 
         # --- Manuel Kontrol için Adım Boyutu ---
         # AYARLANDI: Daha akıcı hareket için manuel kontrol adım boyutu azaltıldı.
@@ -546,7 +567,7 @@ class HavaSavunmaArayuz(QWidget):
 
         # Açı komutları için minimum gönderme aralığı
         self.last_angle_command_send_time = time.time()
-        self.angle_command_minimum_interval = 0.03  # Her 30ms'de bir komut göndermeye çalış
+        self.angle_command_minimum_interval = 0.02  # Her 30ms'de bir komut göndermeye çalış
 
         # Ateşleme bekleme süresi
         self.last_fire_time = 0.0
@@ -586,22 +607,54 @@ class HavaSavunmaArayuz(QWidget):
 
         self.task1_button = QPushButton("Aşama 1", self)
         self.task2_button = QPushButton("Aşama 2", self)
+        # GÜNCELLENDİ: Aşama 3 butonu
         self.task3_button = QPushButton("Aşama 3", self)
         self.manual_control_mode_button = QPushButton("Tam Manuel Kontrol", self)
 
         self.apply_button_style(self.task1_button, font_size=18, padding=10)
         self.apply_button_style(self.task2_button, font_size=18, padding=10)
+        # GÜNCELLENDİ: Aşama 3 butonu stili
         self.apply_button_style(self.task3_button, font_size=18, padding=10)
         self.apply_button_style(self.manual_control_mode_button, font_size=18, padding=10)
 
         task_layout.addWidget(self.task1_button)
         task_layout.addWidget(self.task2_button)
+        # GÜNCELLENDİ: Aşama 3 butonu eklendi
         task_layout.addWidget(self.task3_button)
         task_layout.addWidget(self.manual_control_mode_button)
         tasks_group_box.setLayout(task_layout)
         right_layout.addWidget(tasks_group_box)
         right_layout.addSpacerItem(
             QSpacerItem(10, 10, QSizePolicy.Minimum, QSizePolicy.Fixed))
+
+        # --- Aşama 3 Ayarları Grup Kutusu (YENİ) ---
+        self.task3_settings_group_box = QGroupBox("Aşama 3 Ayarları")
+        self.task3_settings_group_box.setStyleSheet(
+            "color: white; font-size: 16px; font-weight: bold; border: 2px solid white; border-radius: 8px; padding: 5px;")
+        task3_settings_layout = QVBoxLayout()
+        self.a_label = QLabel("Angajman Bölgesi A (°):")
+        self.a_label.setStyleSheet("color: white; font-size: 12px;")
+        self.a_input = QLineEdit(self)
+        self.a_input.setPlaceholderText("örn: -30.0")
+        self.a_input.setStyleSheet("color: black; background-color: white; font-size: 12px;")
+
+        self.b_label = QLabel("Angajman Bölgesi B (°):")
+        self.b_label.setStyleSheet("color: white; font-size: 12px;")
+        self.b_input = QLineEdit(self)
+        self.b_input.setPlaceholderText("örn: 30.0")
+        self.b_input.setStyleSheet("color: black; background-color: white; font-size: 12px;")
+
+        self.task3_start_button = QPushButton("Angajmanı Al", self)
+        self.apply_button_style(self.task3_start_button, font_size=18, padding=10, bg_color="#007bff")
+
+        task3_settings_layout.addWidget(self.a_label)
+        task3_settings_layout.addWidget(self.a_input)
+        task3_settings_layout.addWidget(self.b_label)
+        task3_settings_layout.addWidget(self.b_input)
+        task3_settings_layout.addWidget(self.task3_start_button)
+        self.task3_settings_group_box.setLayout(task3_settings_layout)
+        right_layout.addWidget(self.task3_settings_group_box)
+        self.task3_settings_group_box.setVisible(False)  # Başlangıçta gizli
 
         # --- KONTROL Grup Kutusu ---
         control_group_box = QGroupBox("KONTROL")
@@ -648,8 +701,8 @@ class HavaSavunmaArayuz(QWidget):
         right_layout.addWidget(control_group_box)
 
         # --- Ateş Kontrolü ve Kısıtlı Bölge Ayarları Grup Kutusu ---
-        fire_control_group_box = QGroupBox("Ateş Kontrolü ve Kısıtlı Bölge Ayarları")
-        fire_control_group_box.setStyleSheet(
+        self.fire_control_group_box = QGroupBox("Ateş Kontrolü ve Kısıtlı Bölge Ayarları")
+        self.fire_control_group_box.setStyleSheet(
             "color: white; font-size: 16px; font-weight: bold; border: 2px solid white; border-radius: 8px; padding: 5px;")
         fire_control_layout = QVBoxLayout()
 
@@ -689,10 +742,9 @@ class HavaSavunmaArayuz(QWidget):
         no_fire_buttons_layout.addWidget(self.clear_no_fire_zone_button)
         fire_control_layout.addLayout(no_fire_buttons_layout)
 
-        self.fire_control_group_box = fire_control_group_box
-        fire_control_group_box.setLayout(fire_control_layout)
-        right_layout.addWidget(fire_control_group_box)
-        fire_control_group_box.setVisible(True)
+        self.fire_control_group_box.setLayout(fire_control_layout)
+        right_layout.addWidget(self.fire_control_group_box)
+        self.fire_control_group_box.setVisible(True)
 
         # --- MANUEL YÖN KONTROLÜ Grup Kutusu ---
         self.direct_manual_control_group_box = QGroupBox("Doğrudan Manuel Kontrol")
@@ -741,8 +793,9 @@ class HavaSavunmaArayuz(QWidget):
         # Zamanlayıcı 'start_camera' içinde kamera başarıyla başlatıldıktan sonra başlayacaktır.
 
         self.frame_counter = 0
-        self.yolo_ready = (yolo_model_type is not None)
-        self.model_is_tensorrt = (yolo_model_type == "tensorrt")
+        # --- DÜZELTME 2: Başlangıç model durumunu doğru değişkenle ayarla ---
+        self.yolo_ready = (yolo_model_task12 is not None)
+        self.model_is_tensorrt = (yolo_model_task12 == "tensorrt")
 
         self.crosshair_movable = False
         self.crosshair_fixed_center = True
@@ -759,7 +812,8 @@ class HavaSavunmaArayuz(QWidget):
         print("HATA AYIKLAMA: Sinyaller bağlanıyor.")
         self.task1_button.clicked.connect(self.task1)
         self.task2_button.clicked.connect(self.task2)
-        self.task3_button.clicked.connect(self.task3)
+        # GÜNCELLENDİ: task3 butonu yeni fonksiyona bağlandı
+        self.task3_button.clicked.connect(self.setup_task3)
         self.manual_control_mode_button.clicked.connect(self.set_full_manual_mode)
         self.start_button.clicked.connect(self.start_camera)
         self.stop_button.clicked.connect(self.stop_camera)
@@ -769,6 +823,8 @@ class HavaSavunmaArayuz(QWidget):
         self.reset_angles_button.clicked.connect(self.reset_rpi_angles)
         self.apply_no_fire_zone_button.clicked.connect(self.apply_no_fire_zone_settings)
         self.clear_no_fire_zone_button.clicked.connect(self.clear_no_fire_zone_settings)
+        # YENİ: Aşama 3 başlangıç butonu sinyali
+        self.task3_start_button.clicked.connect(self.start_task3_engagement)
 
         self.movement_states = {
             'yaw_left': False,
@@ -984,6 +1040,7 @@ class HavaSavunmaArayuz(QWidget):
             self.target_lost_time = 0.0
             self.current_tracked_target_class = None
             self.current_tracked_target_bbox = None
+            self.missing_frames = 0  # Sıfırla
             print("HATA AYIKLAMA: Kamera durduruldu, tüm PID ve hedef bilgisi sıfırlandı.")
         else:
             self._update_status_label("Durum: Kamera zaten kapalı.")
@@ -997,6 +1054,13 @@ class HavaSavunmaArayuz(QWidget):
         self.target_lost_time = 0.0
         self.current_tracked_target_class = None
         self.current_tracked_target_bbox = None
+        self.missing_frames = 0  # Sıfırla
+        # YENİ: Aşama 3 ile ilgili durumları sıfırla
+        self.is_ready_to_engage_from_qr = False
+        self.qr_degrees = {}
+        self.current_qr_char = None
+        self.task3_settings_group_box.setVisible(False)
+
         self._update_status_label("Durum: Görev durduruldu.")
         self.target_info_label.setText("Hedef Bilgisi: Yok")
         self._stop_all_manual_movement()
@@ -1023,13 +1087,15 @@ class HavaSavunmaArayuz(QWidget):
         self.last_target_velocity_x = 0.0
         self.last_target_velocity_y = 0.0
         self.current_pid_range = "TEK_SET"
-        print("HATA AYIKLAMA: PID durumu sıfırlandı.")
+        self.missing_frames = 0  # PID sıfırlanırken missing_frames'i de sıfırla
+        # print("HATA AYIKLAMA: PID durumu sıfırlandı.") # Bu mesaj çok sık yazdırıldığı için yorum satırı yapıldı.
 
     def task1(self):
         self.cancel_task()
         self.active_task = 'task1'
         self.crosshair_movable = False
         self.crosshair_fixed_center = True
+        self.task3_settings_group_box.setVisible(False)
         self._update_status_label("Durum: Aşama 1 başlatıldı (Tüm Balonları Takip Et, Manuel Ateş).")
         self.target_info_label.setText("Hedef Bilgisi: Tüm Balonlar.")
         self.kcf_active = False
@@ -1039,12 +1105,15 @@ class HavaSavunmaArayuz(QWidget):
         self.target_lost_time = 0.0
         self.current_tracked_target_class = None
         self.current_tracked_target_bbox = None
+        self.missing_frames = 0  # Sıfırla
         self.movement_restricted_yaw_start = 0
         self.movement_restricted_yaw_end = 0
         self.fire_control_group_box.setVisible(True)
         self.direct_manual_control_group_box.setVisible(False)
         self.is_target_active = True
         self.is_aimed_at_target = False
+        # --- DÜZELTME 3: Görev değiştiğinde model türü bayrağını güncelle ---
+        self.model_is_tensorrt = (yolo_model_task12 == "tensorrt")
         print("HATA AYIKLAMA: Aşama 1 başlatıldı, PID ve hedef bilgisi sıfırlandı.")
 
     def task2(self):
@@ -1052,6 +1121,7 @@ class HavaSavunmaArayuz(QWidget):
         self.active_task = 'task2'
         self.crosshair_movable = False
         self.crosshair_fixed_center = True
+        self.task3_settings_group_box.setVisible(False)
         self._update_status_label("Durum: Aşama 2 başlatıldı (Kırmızı Balonu Takip Et, Otomatik Ateş).")
         self.target_info_label.setText("Hedef Bilgisi: Kırmızı Balon.")
         self.kcf_active = False
@@ -1061,39 +1131,67 @@ class HavaSavunmaArayuz(QWidget):
         self.target_lost_time = 0.0
         self.current_tracked_target_class = None
         self.current_tracked_target_bbox = None
+        self.missing_frames = 0  # Sıfırla
         self.movement_restricted_yaw_start = 0
         self.movement_restricted_yaw_end = 0
         self.fire_control_group_box.setVisible(True)
         self.direct_manual_control_group_box.setVisible(False)
         self.is_target_active = True
         self.is_aimed_at_target = False
+        # --- DÜZELTME 3: Görev değiştiğinde model türü bayrağını güncelle ---
+        self.model_is_tensorrt = (yolo_model_task12 == "tensorrt")
         print("HATA AYIKLAMA: Aşama 2 başlatıldı, PID ve hedef bilgisi sıfırlandı.")
 
-    def task3(self):
+    # YENİ: Aşama 3 ayar panelini gösteren fonksiyon
+    def setup_task3(self):
+        self.cancel_task()
+        self.active_task = 'task3_setup'
+        self.task3_settings_group_box.setVisible(True)
+        self.fire_control_group_box.setVisible(True)
+        self.direct_manual_control_group_box.setVisible(False)
+        self._update_status_label("Durum: Aşama 3 - Angajman ayarları bekleniyor.")
+        self.target_info_label.setText("Hedef Bilgisi: Yok (Ayar Bekleniyor).")
+        self.is_target_active = False  # Henüz hedef takibi aktif değil
+
+    # YENİ: "Angajmanı Al" butonuna basıldığında çalışan fonksiyon
+    def start_task3_engagement(self):
         self.cancel_task()
         self.active_task = 'task3'
         self.crosshair_movable = False
         self.crosshair_fixed_center = True
-        self._update_status_label("Durum: Aşama 3 başlatıldı (QR Kod Hedefi, Otomatik Ateş).")
-        self.target_info_label.setText("Hedef Bilgisi: QR Kod.")
-        self.kcf_active = False
-        self.kcf_bbox = None
-        self.target_destroyed = False
-        self.waiting_for_new_engagement_command = True
-        self.target_lost_time = 0.0
-        self.current_tracked_target_class = None
-        self.current_tracked_target_bbox = None
-        self.movement_restricted_yaw_start = 0
-        self.movement_restricted_yaw_end = 0
         self.fire_control_group_box.setVisible(True)
         self.direct_manual_control_group_box.setVisible(False)
-        self.is_target_active = True
-        self.is_aimed_at_target = False
-        print("HATA AYIKLAMA: Aşama 3 başlatıldı, PID ve hedef bilgisi sıfırlandı.")
+        self.is_ready_to_engage_from_qr = False
+
+        # --- DÜZELTME 4: Aşama 3 modelini doğru şekilde yükle ve ata ---
+        global yolo_model_task3
+        if yolo_model_task3 is None:
+            # Bu, global trt_... değişkenlerini Aşama 3 modeline göre güncelleyecektir.
+            yolo_model_task3 = load_yolo_model(YOLO_MODEL_PATH_TASK3)
+
+        # Tespit fonksiyonunun doğru çalışması için model türü bayrağını güncelle
+        self.model_is_tensorrt = (yolo_model_task3 == "tensorrt")
+
+        # Girilen dereceleri al ve kaydet
+        try:
+            a_degree = float(self.a_input.text())
+            b_degree = float(self.b_input.text())
+            self.qr_degrees = {'A': a_degree, 'B': b_degree}
+            self._update_status_label("Durum: Aşama 3 Ayarları kaydedildi. QR kodu bekleniyor...")
+            self.target_info_label.setText("Hedef Bilgisi: QR Kod.")
+            self.is_target_active = True  # Kare işleme döngüsünü başlat
+            self.waiting_for_new_engagement_command = True
+            self.reset_pid_state()
+            print(f"HATA AYIKLAMA: Aşama 3 angajman başlatıldı. A:{a_degree}, B:{b_degree} dereceleri kaydedildi.")
+        except ValueError:
+            self._update_status_label("Hata: Lütfen geçerli sayısal değerler girin.")
+            self.cancel_task()
+            return
 
     def set_full_manual_mode(self):
         self.cancel_task()
         self.active_task = 'full_manual'
+        self.task3_settings_group_box.setVisible(False)
         self._update_status_label("Durum: Tam Manuel Kontrol Modu Aktif.")
         self.target_info_label.setText("Hedef Bilgisi: Yok (Manuel).")
         self.crosshair_movable = True
@@ -1210,7 +1308,7 @@ class HavaSavunmaArayuz(QWidget):
         img = np.expand_dims(img, axis=0)
         return img
 
-    def _process_yolo_output(self, output, img_width, img_height):
+    def _process_yolo_output(self, output, img_width, img_height, classes_list):
         """YOLO çıktısını işler ve sınırlayıcı kutuları döndürür."""
         boxes = []
         confidences = []
@@ -1249,12 +1347,12 @@ class HavaSavunmaArayuz(QWidget):
             return filtered_boxes, filtered_confidences, filtered_class_ids
         return [], [], []
 
-    def process_yolo_detection(self, frame):
+    def process_yolo_detection(self, frame, model, classes_list):
         """YOLOv11 modelini kullanarak nesne tespiti yapar."""
         global trt_context, trt_inputs, trt_outputs, trt_bindings, trt_stream, trt_output_binding_idx
 
-        if not self.yolo_ready:
-            print("HATA AYIKLAMA (process_yolo_detection): YOLO modeli hazır değil.")
+        if model is None:
+            # print("HATA AYIKLAMA (process_yolo_detection): YOLO modeli hazır değil.")
             return []
 
         if frame is None or frame.size == 0:
@@ -1268,7 +1366,7 @@ class HavaSavunmaArayuz(QWidget):
                 return []
 
             outputs = []
-            if self.model_is_tensorrt:
+            if self.model_is_tensorrt and isinstance(model, str) and model == "tensorrt":
                 # TensorRT ile çıkarım yap
                 if trt_context is None:
                     print("HATA (process_yolo_detection): TensorRT bağlamı başlatılmadı.")
@@ -1294,16 +1392,16 @@ class HavaSavunmaArayuz(QWidget):
                     trt_engine.get_tensor_shape(trt_engine.get_tensor_name(trt_output_binding_idx)))]
             else:
                 # ONNX Runtime ile çıkarım yap
-                outputs = yolo_model_type.run([output_name], {input_name: input_image})
+                outputs = model.run([output_name], {input_name: input_image})
 
             img_height, img_width, _ = frame.shape
             outputs_np = outputs[0]  # _process_yolo_output için bir numpy dizisi olduğundan emin ol
-            boxes, confidences, class_ids = self._process_yolo_output(outputs_np, img_width, img_height)
+            boxes, confidences, class_ids = self._process_yolo_output(outputs_np, img_width, img_height, classes_list)
 
             detections = []
             for i in range(len(boxes)):
                 x, y, w, h = boxes[i]
-                class_name = CLASSES[class_ids[i]] if class_ids[i] < len(CLASSES) else "Bilinmeyen"
+                class_name = classes_list[class_ids[i]] if class_ids[i] < len(classes_list) else "Bilinmeyen"
                 detections.append({
                     'bbox': (x, y, w, h),
                     'score': confidences[i],
@@ -1419,9 +1517,9 @@ class HavaSavunmaArayuz(QWidget):
     def update_frame(self):
         display_frame = None
         try:
-            print("HATA AYIKLAMA (update_frame): Kare güncelleme döngüsü başlatıldı.")
+            # print("HATA AYIKLAMA (update_frame): Kare güncelleme döngüsü başlatıldı.")
             if self.capture is None or not self.capture.isOpened():
-                print("HATA (update_frame): Kamera yakalama nesnesi eksik veya açık değil.")
+                # print("HATA (update_frame): Kamera yakalama nesnesi eksik veya açık değil.")
                 self._update_status_label("Hata: Kamera açık değil. Lütfen başlatın.")
                 self.timer.stop()
                 return
@@ -1460,36 +1558,94 @@ class HavaSavunmaArayuz(QWidget):
             current_target_bbox_for_pid = None
             detected_class_status = None
 
-            print("HATA AYIKLAMA (update_frame): YOLO tespiti başlatılıyor.")
-            if self.is_target_active and self.yolo_ready:
-                detections = self.process_yolo_detection(display_frame)
-                print(f"HATA AYIKLAMA (update_frame): YOLO {len(detections)} tespit buldu.")
+            # print("HATA AYIKLAMA (update_frame): YOLO tespiti başlatılıyor.")
 
-                if self.current_tracked_target_class is not None and not self.target_destroyed:
-                    print(f"HATA AYIKLAMA: Kilitli hedef '{self.current_tracked_target_class}' takip ediliyor.")
+            # --- DÜZELTME 5: Aktif göreve göre doğru model tanıtıcısını ve sınıf listesini seç ---
+            current_yolo_model = None
+            current_classes = None
+            if self.active_task == 'task3':
+                current_yolo_model = yolo_model_task3
+                current_classes = CLASSES_TASK3
+            elif self.active_task in ['task1', 'task2']:
+                current_yolo_model = yolo_model_task12
+                current_classes = CLASSES
+
+            if self.is_target_active and current_yolo_model is not None:
+                detections = self.process_yolo_detection(display_frame, current_yolo_model, current_classes)
+                # print(f"HATA AYIKLAMA (update_frame): YOLO {len(detections)} tespit buldu.")
+
+                # GÜNCELLENDİ: Aşama 3 Mantığı
+                if self.active_task == 'task3' and self.waiting_for_new_engagement_command and not self.is_ready_to_engage_from_qr:
+                    # Aşama 3: QR kodunu oku ve açıya dön
+                    # self.process_tracking_to_home_position() # Önce başlangıç konumuna dön
+                    data, bbox_qr, _ = self.qr_detector.detectAndDecode(display_frame)
+                    if data and data in self.qr_degrees:
+                        # QR koduna en yakın hedefi bul
+                        closest_target_to_qr = None
+                        min_dist_to_qr = float('inf')
+                        qr_center_x = bbox_qr[0][0][0] + (bbox_qr[0][2][0] - bbox_qr[0][0][0]) / 2
+
+                        for det in detections:
+                            det_center_x = det['bbox'][0] + det['bbox'][2] / 2
+                            dist = abs(det_center_x - qr_center_x)
+                            if dist < min_dist_to_qr:
+                                min_dist_to_qr = dist
+                                closest_target_to_qr = det
+
+                        if closest_target_to_qr:
+                            self.current_qr_char = data
+                            self.current_tracked_target_class = closest_target_to_qr['class_name']
+                            target_yaw_from_qr = self.qr_degrees[self.current_qr_char]
+
+                            self.send_angle_command(target_yaw_from_qr, self.current_pitch_angle)
+                            self.is_ready_to_engage_from_qr = True
+                            self.waiting_for_new_engagement_command = False
+
+                            self._update_status_label(
+                                f"Durum: QR Kodu '{data}' okundu. Hedef '{self.current_tracked_target_class}' kilitlendi. Açıya dönülüyor: {target_yaw_from_qr}°")
+                            self.target_info_label.setText(
+                                f"Hedef: {self.current_tracked_target_class}. Açıya dönülüyor.")
+                        else:
+                            self._update_status_label(f"Uyarı: QR Kodu okundu ancak yanında hedef bulunamadı.")
+
+                    elif data and data not in self.qr_degrees:
+                        self._update_status_label(f"Uyarı: QR Kodu okundu ancak geçerli değil: '{data}'")
+
+                elif self.current_tracked_target_class is not None and not self.target_destroyed:
+                    # print(f"HATA AYIKLAMA: Kilitli hedef '{self.current_tracked_target_class}' takip ediliyor.")
                     closest_locked_detection = None
                     min_locked_distance = float('inf')
 
-                    if self.current_tracked_target_bbox:
-                        locked_center_x = self.current_tracked_target_bbox[0] + self.current_tracked_target_bbox[
-                            2] // 2
-                        locked_center_y = self.current_tracked_target_bbox[1] + self.current_tracked_target_bbox[
-                            3] // 2
-                    else:
-                        locked_center_x = center_x_frame
-                        locked_center_y = center_y_frame
+                    # Son bilinen veya tahmin edilen hedef merkezini al
+                    last_tracked_center_x = self.current_tracked_target_bbox[0] + self.current_tracked_target_bbox[
+                        2] // 2 if self.current_tracked_target_bbox else center_x_frame
+                    last_tracked_center_y = self.current_tracked_target_bbox[1] + self.current_tracked_target_bbox[
+                        3] // 2 if self.current_tracked_target_bbox else center_y_frame
+
+                    # Eğer kayıp kareler varsa, yeniden edinme için tahmini merkezi kullan
+                    if self.missing_frames > 0 and self.last_target_x is not None and self.last_target_y is not None:
+                        time_since_last_known = current_frame_time - self.last_frame_time
+                        predicted_x_for_reacq = self.last_target_x + self.last_target_velocity_x * time_since_last_known
+                        predicted_y_for_reacq = self.last_target_y + self.last_target_velocity_y * time_since_last_known
+                        last_tracked_center_x = int(predicted_x_for_reacq)
+                        last_tracked_center_y = int(predicted_y_for_reacq)
+                        # print(
+                        #     f"HATA AYIKLAMA: Yeniden edinme için tahmini merkez kullanılıyor: ({last_tracked_center_x}, {last_tracked_center_y})")
 
                     for det in detections:
+                        # Sadece mevcut kilitli hedef sınıfıyla eşleşenleri kontrol et
                         if det['class_name'] == self.current_tracked_target_class:
                             x, y, det_w, det_h = det['bbox']
                             det_center_x = x + det_w // 2
                             det_center_y = y + det_h // 2
                             distance = np.sqrt(
-                                (det_center_x - locked_center_x) ** 2 + (det_center_y - locked_center_y) ** 2)
-                            if distance < min_locked_distance:
+                                (det_center_x - last_tracked_center_x) ** 2 + (
+                                        det_center_y - last_tracked_center_y) ** 2)
+
+                            # Yalnızca son bilinen/tahmin edilen konumdan belirli bir mesafe içindeki tespitleri dikkate al
+                            if distance < min_locked_distance and distance < self.MAX_REACQUISITION_DISTANCE_PIXELS:
                                 min_locked_distance = distance
                                 closest_locked_detection = det
-                                self.current_tracked_target_bbox = det['bbox']
 
                     if closest_locked_detection:
                         current_target_bbox_for_pid = closest_locked_detection['bbox']
@@ -1497,44 +1653,73 @@ class HavaSavunmaArayuz(QWidget):
                         self.target_info_label.setText(
                             f"Hedef: YOLO Takip Ediyor ({detected_class_status}).")
                         self.target_lost_time = 0.0
-                    else:
-                        print(
-                            f"HATA AYIKLAMA: Kilitli hedef sınıfı için YOLO tespiti bulunamadı ({self.current_tracked_target_class}) veya çok uzakta.")
-                        if self.target_lost_time == 0.0:
-                            self.target_lost_time = current_frame_time
+                        self.missing_frames = 0  # Hedef bulunduğunda sayacı sıfırla
+                        # current_tracked_target_bbox'u yeni bulunan tespitle güncelle
+                        self.current_tracked_target_bbox = current_target_bbox_for_pid
 
-                        if current_frame_time - self.target_lost_time < self.prediction_time_limit:
+                        # Hedef hızını yeni tespitten güncelle
+                        # Hedef hızını yeni tespitten güncelle (Yumuşatma ile)
+                        if self.last_target_x is not None and self.last_frame_time is not None:
+                            delta_time_for_velocity = current_frame_time - self.last_frame_time
+                            if delta_time_for_velocity > 0:
+                                # 1. Anlık (gürültülü) hızı hesapla
+                                current_raw_velocity_x = (current_target_bbox_for_pid[0] +
+                                                          current_target_bbox_for_pid[
+                                                              2] // 2 - self.last_target_x) / delta_time_for_velocity
+                                current_raw_velocity_y = (current_target_bbox_for_pid[1] +
+                                                          current_target_bbox_for_pid[
+                                                              3] // 2 - self.last_target_y) / delta_time_for_velocity
+
+                                # 2. Üstel Hareketli Ortalama (EMA) ile hızı yumuşat
+                                alpha = self.velocity_smoothing_factor
+                                self.last_target_velocity_x = (alpha * current_raw_velocity_x) + (
+                                            1 - alpha) * self.last_target_velocity_x
+                                self.last_target_velocity_y = (alpha * current_raw_velocity_y) + (
+                                            1 - alpha) * self.last_target_velocity_y
+                        # Hız hesaplamasından SONRA last_target_x, last_target_y, last_frame_time'ı güncelle
+                        self.last_target_x = current_target_bbox_for_pid[0] + current_target_bbox_for_pid[2] // 2
+                        self.last_target_y = current_target_bbox_for_pid[1] + current_target_bbox_for_pid[3] // 2
+                        self.last_frame_time = current_frame_time
+                        # print(f"HATA AYIKLAMA: Kilitli hedef yeniden edinildi. Missing frames sıfırlandı.")
+
+                    else:  # closest_locked_detection is None
+                        # print(
+                        #     f"HATA AYIKLAMA: Kilitli hedef sınıfı için YOLO tespiti bulunamadı ({self.current_tracked_target_class}) veya çok uzakta.")
+                        self.missing_frames += 1  # Hedef bulunamadığında sayacı artır
+
+                        if self.missing_frames <= self.MAX_MISSING_FRAMES:
                             self._update_status_label(
-                                f"Durum: Hedef kaybedildi, tahminle takip etmeye çalışılıyor ({self.prediction_time_limit - (current_frame_time - self.target_lost_time):.1f}s kaldı).")
+                                f"Durum: Hedef kaybedildi, tahminle takip etmeye çalışılıyor ({self.MAX_MISSING_FRAMES - self.missing_frames} kare kaldı).")
                             self.target_info_label.setText("Hedef: Takip Kayboldu. Tahminle hareket ediyor.")
 
-                            if self.last_target_x is not None and self.last_frame_time is not None:
+                            if self.last_target_x is not None and self.last_frame_time is not None and self.current_tracked_target_bbox is not None:
+                                # Sadece geçerli bir son bilinen konum ve bbox boyutu varsa tahmin et
                                 time_since_last_detection = current_frame_time - self.last_frame_time
                                 predicted_x = self.last_target_x + self.last_target_velocity_x * time_since_last_detection
                                 predicted_y = self.last_target_y + self.last_target_velocity_y * time_since_last_detection
-                                if self.current_tracked_target_bbox:
-                                    _, _, w, h = self.current_tracked_target_bbox
-                                    current_target_bbox_for_pid = (
-                                        int(predicted_x - w / 2), int(predicted_y - h / 2), w, h)
-                                    print(f"HATA AYIKLAMA: Hedef tahmin edildi: X={predicted_x:.1f}, Y={predicted_y:.1f}")
-                                else:
-                                    current_target_bbox_for_pid = None
-                            else:
-                                current_target_bbox_for_pid = None
 
+                                _, _, w_last, h_last = self.current_tracked_target_bbox  # Son takip edilen bbox'un boyutlarını kullan
+                                current_target_bbox_for_pid = (
+                                    int(predicted_x - w_last / 2), int(predicted_y - h_last / 2), w_last, h_last)
+                                # print(f"HATA AYIKLAMA: Hedef tahmin edildi: X={predicted_x:.1f}, Y={predicted_y:.1f}")
+                            else:
+                                current_target_bbox_for_pid = None  # Tahmin için yeterli veri yok
+                                # print("HATA AYIKLAMA: Tahmin için yeterli veri yok, PID hedefi yok.")
                         else:
-                            print(f"HATA AYIKLAMA: Hedef takibi kaybedildi ve zaman aşımı doldu. Hedef kalıcı olarak kaybedildi.")
+                            # Hedef gerçekten kayboldu
+                            print(
+                                f"HATA AYIKLAMA: Hedef takibi {self.MAX_MISSING_FRAMES} kare boyunca kaybedildi. Hedef kalıcı olarak kaybedildi.")
                             current_target_bbox_for_pid = None
                             self.current_tracked_target_class = None
-                            self.current_tracked_target_bbox = None
+                            self.current_tracked_target_bbox = None  # Gerçekten kaybolduğunda bbox'u temizle
                             self.target_destroyed = True
                             self.waiting_for_new_engagement_command = True
                             self.target_info_label.setText("Hedef: Takip Kayboldu. Yeni hedef aranıyor.")
                             self.reset_pid_state()
-                            self._update_status_label("Durum: Hedef kalıcı olarak kaybedildi. Yeni hedef aranıyor.")
-                            print("HATA AYIKLAMA: Hedef kaybedildi ve zaman aşımı doldu, PID ve hedef bilgisi sıfırlandı.")
+                            print(
+                                "HATA AYIKLAMA: Hedef kaybedildi ve zaman aşımı doldu, PID ve hedef bilgisi sıfırlandı.")
                 elif self.waiting_for_new_engagement_command or self.current_tracked_target_class is None:
-                    print("HATA AYIKLAMA: Yeni hedef edinme/yeniden edinme süreci başlatıldı.")
+                    # print("HATA AYIKLAMA: Yeni hedef edinme/yeniden edinme süreci başlatıldı.")
                     candidate_target = None
                     minimum_distance = float('inf')
 
@@ -1576,101 +1761,39 @@ class HavaSavunmaArayuz(QWidget):
                             self.target_info_label.setText(f"Hedef Bilgisi: Kırmızı Balon Yok.")
                             self._update_status_label("Durum: Yeni hedef bekleniyor...")
 
-                    elif self.active_task == 'task3':
-                        if current_frame_time - self.last_qr_check_time > self.qr_check_interval:
-                            data, bbox_qr, _ = self.qr_detector.detectAndDecode(display_frame)
-                            if bbox_qr is not None and len(bbox_qr) > 0:
-                                bbox_qr = bbox_qr[0]
-                                x_qr = int(min(p[0] for p in bbox_qr))
-                                y_qr = int(min(p[1] for p in bbox_qr))
-                                w_qr = int(max(p[0] for p in bbox_qr) - x_qr)
-                                h_qr = int(max(p[1] for p in bbox_qr) - y_qr)
-
-                                cv2.polylines(display_frame, [np.int32(bbox_qr)], True, (0, 255, 255), 3)
-                                cv2.putText(display_frame, f"QR: {data}", (x_qr, y_qr - 10),
-                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
-
-                                if data:
-                                    try:
-                                        qr_data = json.loads(data)
-                                        target_color = qr_data.get("color")
-                                        target_shape = qr_data.get("shape")
-                                        no_fire_zone = qr_data.get("no_fire_zone")
-                                        move_restricted_zone = qr_data.get("move_restricted_zone")
-
-                                        if target_color:
-                                            self.active_engagement_target_color = target_color
-                                            self.active_engagement_target_shape = target_shape
-                                            self._update_status_label(
-                                                f"Durum: QR Kod: Hedef {target_color} {target_shape if target_shape else ''}.")
-
-                                        if no_fire_zone and len(no_fire_zone) == 2:
-                                            self.no_fire_yaw_start = no_fire_zone[0]
-                                            self.no_fire_yaw_end = no_fire_zone[1]
-                                            print(
-                                                f"HATA AYIKLAMA: Ateşsiz bölge güncellendi: {self.no_fire_yaw_start}-{self.no_fire_yaw_end}")
-
-                                        if move_restricted_zone and len(move_restricted_zone) == 2:
-                                            self.movement_restricted_yaw_start = move_restricted_zone[0]
-                                            self.movement_restricted_yaw_end = move_restricted_zone[1]
-                                            print(
-                                                f"HATA AYIKLAMA: Hareket kısıtlı bölge güncellendi: {self.movement_restricted_yaw_start}-{self.movement_restricted_yaw_end}")
-
-                                    except json.JSONDecodeError:
-                                        print("QR Kod verisi JSON formatında değil.")
-                                        self._update_status_label("Durum: QR Kod hatası (JSON).")
-                                    except Exception as qr_parsing_error:
-                                        print(f"HATA: QR kodu işlenirken hata: {qr_parsing_error}")
-                                        traceback.print_exc()
-                                        self._update_status_label(
-                                            f"Hata: QR kodu işleme hatası: {str(qr_parsing_error)[:50]}...")
-
-                            self.last_qr_check_time = current_frame_time
-
-                        if self.active_engagement_target_color:
-                            matching_detections = [d for d in detections if
-                                                   d['class_name'].startswith(self.active_engagement_target_color)]
-                            for det in matching_detections:
-                                x, y, det_w, det_h = det['bbox']
-                                det_center_x = x + det_w // 2
-                                det_center_y = y + det_h // 2
-                                distance = np.sqrt(
-                                    (det_center_x - center_x_frame) ** 2 + (det_center_y - center_y_frame) ** 2)
-                                if distance < minimum_distance:
-                                    minimum_distance = distance
-                                    candidate_target = det
-                            if candidate_target:
-                                self.target_info_label.setText(
-                                    f"Hedef Bilgisi: Angajman Hedefi ({candidate_target['class_name']}) algılandı.")
-                                detected_class_status = candidate_target['class_name']
-                                self._update_status_label("Durum: Aşama 3 - Hedef kilitlendi.")
-                            else:
-                                self.target_info_label.setText("Hedef Bilgisi: Angajman Hedefi Yok.")
-                                detected_class_status = None
-                                self._update_status_label("Durum: Yeni hedef bekleniyor...")
-                        else:
-                            self.target_info_label.setText("Hedef Bilgisi: QR Kod bekleniyor.")
-                            self._update_status_label("Durum: Yeni hedef bekleniyor...")
+                    # GÜNCELLENDİ: Bu blok artık kullanılmıyor, Aşama 3 mantığı yukarıda ele alındı
+                    # elif self.active_task == 'task3' and self.is_ready_to_engage_from_qr:
+                    #     pass
 
                     if candidate_target:
                         self.current_tracked_target_class = candidate_target['class_name']
-                        self.current_tracked_target_bbox = candidate_target['bbox']
+                        self.current_tracked_target_bbox = candidate_target[
+                            'bbox']  # Yeni hedef kilitlendiğinde bbox'u ayarla
                         self.target_destroyed = False
                         self.waiting_for_new_engagement_command = False
                         self.target_lost_time = 0.0
+                        self.missing_frames = 0  # Yeni hedef kilitlendiğinde sayacı sıfırla
                         current_target_bbox_for_pid = candidate_target['bbox']
-                        self.reset_pid_state()
-                        print(f"HATA AYIKLAMA: Yeni hedef kilitlendi: {self.current_tracked_target_class}. PID sıfırlandı.")
+                        self.reset_pid_state()  # Yeni hedef için PID durumunu sıfırla
+                        # Yeni hedef için last_target_x, last_target_y, last_frame_time'ı başlat
+                        self.last_target_x = current_target_bbox_for_pid[0] + current_target_bbox_for_pid[2] // 2
+                        self.last_target_y = current_target_bbox_for_pid[1] + current_target_bbox_for_pid[3] // 2
+                        self.last_frame_time = current_frame_time
+                        self.last_target_velocity_x = 0.0  # Yeni hedef için hızı sıfırla
+                        self.last_target_velocity_y = 0.0  # Yeni hedef için hızı sıfırla
+
+                        print(
+                            f"HATA AYIKLAMA: Yeni hedef kilitlendi: {self.current_tracked_target_class}. PID sıfırlandı.")
                     else:
                         current_target_bbox_for_pid = None
                         self.current_tracked_target_class = None
                         self.current_tracked_target_bbox = None
                         if self.target_destroyed and self.waiting_for_new_engagement_command:
-                            print("HATA AYIKLAMA: PID sıfırlandı (Hedef Yok Edildi/Bekleniyor).")
+                            # print("HATA AYIKLAMA: PID sıfırlandı (Hedef Yok Edildi/Bekleniyor).")
                             self.target_info_label.setText("Hedef Bilgisi: Yok Edildi. Yeni angajman bekleniyor.")
                         self.target_lost_time = 0.0
 
-            print("HATA AYIKLAMA (update_frame): YOLO tespitleri çiziliyor.")
+            # print("HATA AYIKLAMA (update_frame): YOLO tespitleri çiziliyor.")
             for det in detections:
                 x, y, w_det, h_det = [int(v) for v in det['bbox']]
                 yolo_draw_color = (0, 255, 0)
@@ -1678,19 +1801,19 @@ class HavaSavunmaArayuz(QWidget):
                 if self.current_tracked_target_class and det[
                     'class_name'] == self.current_tracked_target_class:
                     if current_target_bbox_for_pid and det['bbox'] == current_target_bbox_for_pid:
-                        yolo_draw_color = (0, 0, 255)
+                        yolo_draw_color = (0, 0, 255)  # Kilitli hedef kırmızı
                     else:
-                        yolo_draw_color = (0, 255, 255)
+                        yolo_draw_color = (0, 255, 255)  # Diğer aynı sınıftan hedefler sarı
                 else:
-                    yolo_draw_color = (0, 255, 0)
+                    yolo_draw_color = (0, 255, 0)  # Diğer hedefler yeşil
 
                 # Çerçeve kalınlığı 1'den 2'ye çıkarıldı
                 cv2.rectangle(display_frame, (x, y), (x + w_det, y + h_det), yolo_draw_color,
-                              2) # Kalınlık 2 olarak ayarlandı
+                              2)  # Kalınlık 2 olarak ayarlandı
                 cv2.putText(display_frame, f"YOLO: {det['class_name']} ({det['score']:.2f})", (x, y - 25),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.4, yolo_draw_color, 1)
 
-            print("HATA AYIKLAMA (update_frame): PID kontrolü başlatılıyor.")
+            # print("HATA AYIKLAMA (update_frame): PID kontrolü başlatılıyor.")
             if current_target_bbox_for_pid and not self.target_destroyed:
                 x_pid, y_pid, w_pid, h_pid = [int(v) for v in current_target_bbox_for_pid]
                 target_center_x = x_pid + w_pid // 2
@@ -1702,10 +1825,14 @@ class HavaSavunmaArayuz(QWidget):
                 if self.active_task not in ['full_manual']:
                     if not self.target_destroyed and not self.waiting_for_new_engagement_command:
                         self.target_info_label.setText("Hedef Bilgisi: Yok.")
-                if self.active_task == 'task3' and not self.target_destroyed and not self.waiting_for_new_engagement_command:
+                # GÜNCELLENDİ: Aşama 3'te hedef yok edildiğinde veya kaybolduğunda ana konuma dön
+                if self.active_task == 'task3' and self.target_destroyed and self.waiting_for_new_engagement_command:
                     self.process_tracking_to_home_position()
+                    self.is_ready_to_engage_from_qr = False  # Yeni QR için hazırla
+                    self.current_qr_char = None
+                    self.current_tracked_target_class = None
 
-            print("HATA AYIKLAMA (update_frame): Göreve özel durum güncellemeleri.")
+            # print("HATA AYIKLAMA (update_frame): Göreve özel durum güncellemeleri.")
             if self.active_task == 'task1':
                 if current_target_bbox_for_pid and not self.target_destroyed:
                     self._update_status_label("Durum: Aşama 1 - Hedefe Nişan Alıyor (Manuel Ateş).")
@@ -1732,10 +1859,14 @@ class HavaSavunmaArayuz(QWidget):
                 else:
                     self._update_status_label("Durum: Aşama 2 - Hedef Yok.")
             elif self.active_task == 'task3':
-                if current_target_bbox_for_pid and detected_class_status == self.active_engagement_target_color and self.is_aimed_at_target and not self.target_destroyed:
+                # GÜNCELLENDİ: Aşama 3 durum mesajları
+                if current_target_bbox_for_pid and self.is_aimed_at_target and not self.target_destroyed:
                     if not self.is_in_no_fire_zone(self.current_yaw_angle):
                         try:
                             self.fire_weapon()
+                            # self.target_destroyed = True # Bu fire_weapon yanıtında ayarlanacak
+                            # self.waiting_for_new_engagement_command = True
+                            # self.is_ready_to_engage_from_qr = False
                             self._update_status_label("Durum: Aşama 3 - Hedef yok edildi! (Otonom)")
                             print("HATA AYIKLAMA: Hedef algılandı ve ateşlendi (Aşama 3 - Otonom)!")
                         except Exception as e:
@@ -1744,15 +1875,15 @@ class HavaSavunmaArayuz(QWidget):
                             self._update_status_label(f"Hata: Aşama 3 ateşleme hatası: {str(e)[:50]}...")
                     else:
                         self._update_status_label("Durum: Aşama 3 - Ateşsiz bölgede ateşleme engellendi!")
-                elif current_target_bbox_for_pid and detected_class_status != self.active_engagement_target_color:
-                    self._update_status_label(
-                        "Durum: Aşama 3 - Dost/Yanlış hedef algılandı, ateşleme engellendi.")
                 elif current_target_bbox_for_pid and not self.target_destroyed:
-                    self._update_status_label("Durum: Aşama 3 - Angajman hedefine nişan alıyor...")
+                    self._update_status_label(
+                        "Durum: Aşama 3 - Angajman hedefine nişan alıyor...")
                 elif self.target_destroyed:
-                    self._update_status_label("Durum: Aşama 3 - Hedef yok edildi. Yeni hedef bekleniyor.")
+                    self._update_status_label("Durum: Aşama 3 - Hedef yok edildi. Ana konuma dönülüyor...")
+                elif not self.is_ready_to_engage_from_qr:
+                    self._update_status_label("Durum: Aşama 3 - Angajman için QR Kodu bekleniyor.")
                 else:
-                    self._update_status_label("Durum: Aşama 3 - Angajman Hedefi Yok.")
+                    self._update_status_label("Durum: Aşama 3 - Angajman Hedefi Aranıyor.")
             elif self.active_task == 'full_manual':
                 if self.is_in_no_fire_zone(self.current_yaw_angle):
                     self._update_status_label(
@@ -1761,15 +1892,15 @@ class HavaSavunmaArayuz(QWidget):
                     self._update_status_label(
                         f"Durum: Tam Manuel Kontrol Modu - Yaw: {self.current_yaw_angle:.1f}°, Pitch: {self.current_pitch_angle:.1f}°")
                 self.target_info_label.setText("Hedef Bilgisi: Kullanıcı Kontrollü.")
-            else:
+            elif self.active_task != 'task3_setup':
                 self._update_status_label("Durum: Hazır.")
                 self.target_info_label.setText("Hedef Bilgisi: Yok.")
 
-            print("HATA AYIKLAMA (update_frame): Ekran üzerinde çerçeve gösteriliyor.")
+            # print("HATA AYIKLAMA (update_frame): Ekran üzerinde çerçeve gösteriliyor.")
             self._display_frame(display_frame)
 
             self.frame_counter += 1
-            print("HATA AYIKLAMA (update_frame): Kare güncelleme döngüsü tamamlandı.")
+            # print("HATA AYIKLAMA (update_frame): Kare güncelleme döngüsü tamamlandı.")
         except Exception as main_loop_error:
             print(f"KRİTİK HATA: update_frame ana döngüsünde beklenmedik hata: {main_loop_error}")
             traceback.print_exc()
@@ -1784,8 +1915,8 @@ class HavaSavunmaArayuz(QWidget):
         zone_start = self.no_fire_yaw_start
         zone_end = self.no_fire_yaw_end
 
-        print(
-            f"HATA AYIKLAMA (is_in_no_fire_zone): current_yaw_angle={current_yaw_angle:.1f}°'nin [{zone_start:.1f}°, {zone_end:.1f}°] bölgesi içinde olup olmadığı kontrol ediliyor.")
+        # print(
+        #     f"HATA AYIKLAMA (is_in_no_fire_zone): current_yaw_angle={current_yaw_angle:.1f}°'nin [{zone_start:.1f}°, {zone_end:.1f}°] bölgesi içinde olup olmadığı kontrol ediliyor.")
 
         normalized_yaw = (current_yaw_angle + 180) % 360 - 180
 
@@ -1875,7 +2006,7 @@ class HavaSavunmaArayuz(QWidget):
                 pass
             else:
                 try:
-                    self.fire_weapon()
+                    # self.fire_weapon() # Otomatik ateşleme update_frame'e taşındı
                     self._update_status_label("Durum: Hedefe nişan alındı, otomatik ateş bekleniyor...")
                 except Exception as e:
                     print(f"HATA: Otomatik ateşleme sırasında hata: {e}")
@@ -1885,8 +2016,10 @@ class HavaSavunmaArayuz(QWidget):
         delta_time = current_frame_time - self.pid_update_time
         self.pid_update_time = current_frame_time
 
-        feedforward_yaw = 0.0
-        feedforward_pitch = 0.0
+        #feedforward_yaw = 0.0
+        #feedforward_pitch = 0.0
+        feedforward_yaw = self.last_target_velocity_x * self.DEGREES_PER_PIXEL_YAW * self.feedforward_yaw_gain
+        feedforward_pitch = self.last_target_velocity_y * self.DEGREES_PER_PIXEL_PITCH * self.feedforward_pitch_gain
 
         self.integral_yaw += error_yaw_degree * delta_time
         self.integral_yaw = max(min(self.integral_yaw, 20.0), -20.0)
@@ -1943,16 +2076,16 @@ class HavaSavunmaArayuz(QWidget):
 
         # Yalnızca sıfır olmayan hareket varsa komut gönder
         if output_yaw != 0.0 or output_pitch != 0.0:
-            print(
-                f"PID Hata Ayıklama (Orantılı): Hata Yaw (px): {error_yaw_pixel}, Hata Yaw (°): {error_yaw_degree:.2f}, Çıkış Yaw (°): {output_yaw:.2f}, "
-                f"Hata Pitch (px): {error_pitch_pixel}, Hata Pitch (°): {error_pitch_degree:.2f}, Çıkış Pitch (°): {output_pitch:.2f}")
-            print(f"Orantılı Hareket Gönderildi: Delta Yaw: {output_yaw:.2f}, Delta Pitch: {output_pitch:.2f}")
+            # print(
+            #     f"PID Hata Ayıklama (Orantılı): Hata Yaw (px): {error_yaw_pixel}, Hata Yaw (°): {error_yaw_degree:.2f}, Çıkış Yaw (°): {output_yaw:.2f}, "
+            #     f"Hata Pitch (px): {error_pitch_pixel}, Hata Pitch (°): {error_pitch_degree:.2f}, Çıkış Pitch (°): {output_pitch:.2f}")
+            # print(f"Orantılı Hareket Gönderildi: Delta Yaw: {output_yaw:.2f}, Delta Pitch: {output_pitch:.2f}")
 
             # Yeni orantılı hareket komutu gönder
             self.send_proportional_move_command(output_yaw, output_pitch)
         else:
-            print(
-                f"HATA AYIKLAMA (process_tracking): Hedef ölü bant içinde veya minimum eşiğin altında. Hata Yaw: {error_yaw_pixel}px ({error_yaw_degree:.2f}°), Pitch: {error_pitch_pixel}px ({error_pitch_degree:.2f}°). Hareket komutu gönderilmedi.")
+            # print(
+            #     f"HATA AYIKLAMA (process_tracking): Hedef ölü bant içinde veya minimum eşiğin altında. Hata Yaw: {error_yaw_pixel}px ({error_yaw_degree:.2f}°), Pitch: {error_pitch_pixel}px ({error_pitch_degree:.2f}°). Hareket komutu gönderilmedi.")
             self.target_info_label.setText(
                 f"Hedef: Nişan Alındı. Hata: Yaw {error_yaw_pixel}px, Pitch {error_pitch_pixel}px")
 
@@ -1979,8 +2112,14 @@ class HavaSavunmaArayuz(QWidget):
         error_yaw_degree = target_yaw_home - current_yaw
         error_pitch_degree = target_pitch_home - current_pitch
 
+        # En kısa yolu bulmak için hatayı normalleştir
         error_yaw_degree = (error_yaw_degree + 180) % 360 - 180
         error_pitch_degree = (error_pitch_degree + 180) % 360 - 180
+
+        # Eğer zaten ana konumdaysak, hiçbir şey yapma
+        if abs(error_yaw_degree) < 0.5 and abs(error_pitch_degree) < 0.5:
+            self._update_status_label(f"Durum: Ana konuma ulaşıldı. Yeni QR bekleniyor.")
+            return
 
         current_time = time.time()
         delta_time = current_time - self.pid_update_time
@@ -1988,8 +2127,8 @@ class HavaSavunmaArayuz(QWidget):
 
         new_pid_range_home = "ANA_KONUM"
         if self.current_pid_range != new_pid_range_home:
-            print(
-                f"HATA AYIKLAMA: PID aralığı değişti: {self.current_pid_range} -> {new_pid_range_home}. PID sıfırlanıyor (Ana Konum).")
+            # print(
+            #     f"HATA AYIKLAMA: PID aralığı değişti: {self.current_pid_range} -> {new_pid_range_home}. PID sıfırlanıyor (Ana Konum).")
             self.reset_pid_state()
             self.current_pid_range = new_pid_range_home
 
@@ -2034,7 +2173,7 @@ class HavaSavunmaArayuz(QWidget):
         else:
             self._update_status_label(
                 f"Durum: Ana konum ulaşıldı: Yaw {current_yaw:.1f}°, Pitch {current_pitch:.1f}°")
-            print("Ana konum ulaşıldı.")
+            # print("Ana konum ulaşıldı.")
             return
 
         self.target_info_label.setText(
