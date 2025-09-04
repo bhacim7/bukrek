@@ -292,7 +292,7 @@ class RPiCommunicator(QThread):
                 self.response_received_signal.emit(response)
                 # Eğer bir açı güncellemesi ise, sinyali doğrudan yay
                 if response.get("action") in ["get_angles", "set_angles", "move_by_direction",
-                                              "set_proportional_angles_delta"] and response.get("status") == "ok":
+                                              "set_proportional_angles_delta", "manual_move_continuous"] and response.get("status") == "ok":
                     yaw = response.get("current_yaw", 0.0)
                     pitch = response.get("current_pitch", 0.0)
                     self.angles_update_signal.emit(yaw, pitch)
@@ -364,7 +364,7 @@ class RPiCommunicator(QThread):
             return False
         try:
             message = (json.dumps(command_dict) + '\n').encode('utf-8')
-            print(f"HATA AYIKLAMA (RPiComm): Komut gönderildi: {message.decode('utf-8').strip()}")
+            # print(f"HATA AYIKLAMA (RPiComm): Komut gönderildi: {message.decode('utf-8').strip()}")
             self.rpi_socket.sendall(message)
             return True
         except socket.error as e:
@@ -506,8 +506,8 @@ class HavaSavunmaArayuz(QWidget):
 
         # YENİ: Hedefin kaç ardışık karede algılanamadığını takip etmek için
         self.missing_frames = 0
-        self.MAX_MISSING_FRAMES = 15  # Hedefi tamamen kaybetmeden önceki maksimum kayıp kare sayısı (5'ten 10'a çıkarıldı)
-        self.MAX_REACQUISITION_DISTANCE_PIXELS = 250  # Piksel. Kameranın görüş alanı ve hedef hızına göre ayarlanır. (150'den 200'e çıkarıldı)
+        self.MAX_MISSING_FRAMES = 15
+        self.MAX_REACQUISITION_DISTANCE_PIXELS = 250
 
         # --- PID Kontrol Değişkenleri ---
         # AYARLANDI: Daha hızlı ve daha agresif yanıt için PID kazançları artırıldı.
@@ -572,7 +572,8 @@ class HavaSavunmaArayuz(QWidget):
 
         # Açı komutları için minimum gönderme aralığı
         self.last_angle_command_send_time = time.time()
-        self.angle_command_minimum_interval = 0.03
+        # GÜNCELLENDİ: Daha esnek komut gönderme aralığı.
+        self.angle_command_minimum_interval = 0.02
 
         # Ateşleme bekleme süresi
         self.last_fire_time = 0.0
@@ -938,7 +939,7 @@ class HavaSavunmaArayuz(QWidget):
                 print("Taret açıları Raspberry Pi'de (0,0) olarak sıfırlandı.")
                 self.reset_pid_state()  # PID durumunu sıfırla
                 print("HATA AYIKLAMA: Açı sıfırlamadan sonra PID bilgisi sıfırlandı.")
-            elif response_data.get("action") in ["set_angles", "move_by_direction", "set_proportional_angles_delta"]:
+            elif response_data.get("action") in ["set_angles", "move_by_direction", "set_proportional_angles_delta", "manual_move_continuous"]:
                 pass  # Açılar zaten angles_update_signal aracılığıyla güncellendi
             elif response_data.get("action") == "test_motor_movement":
                 self._update_status_label(f"Durum: Motor Testi: {response_data.get('message')}")
@@ -953,7 +954,7 @@ class HavaSavunmaArayuz(QWidget):
             self.rpi_thread.command_queue.put(command_dict)
             return True
         else:
-            self.status_update_signal.emit("Hata: Raspberry Pi'ye bağlı değil, komut gönderilemedi.")
+            # self._update_status_label("Hata: Raspberry Pi'ye bağlı değil, komut gönderilemedi.")
             return False
 
     def send_proportional_move_command(self, delta_yaw, delta_pitch):
@@ -962,8 +963,8 @@ class HavaSavunmaArayuz(QWidget):
         Bu PID kontrolü için kullanılır.
         """
         if not self.rpi_thread.is_connected:
-            self._update_status_label(
-                "Hata: Raspberry Pi'ye bağlı değil, orantılı hareket komutu gönderilemedi.")
+            # self._update_status_label(
+            #     "Hata: Raspberry Pi'ye bağlı değil, orantılı hareket komutu gönderilemedi.")
             return False
 
         current_time = time.time()
@@ -977,7 +978,7 @@ class HavaSavunmaArayuz(QWidget):
     def start_camera(self):
         try:
             print("Kamera başlatılıyor...")
-            camera_indices = [1, 2, 3, 4]
+            camera_indices = [0, 1, 2, 3, 4]
             self.capture = None
 
             for index in camera_indices:
@@ -1239,7 +1240,7 @@ class HavaSavunmaArayuz(QWidget):
         """Manuel hareket zamanlayıcısını başlatır veya durdurur."""
         if any(self.movement_states.values()):
             if not self.manual_movement_timer.isActive():
-                self.manual_movement_timer.start(10)  # AYARLANDI: 10ms (daha akıcı manuel hareket için)
+                self.manual_movement_timer.start(20)  # AYARLANDI: 10ms (daha akıcı manuel hareket için)
         else:
             if self.manual_movement_timer.isActive():
                 self.manual_movement_timer.stop()
@@ -1247,7 +1248,7 @@ class HavaSavunmaArayuz(QWidget):
             if self.rpi_thread.is_connected:
                 # Hareket durduğunda Raspberry Pi'ye sıfır hareket komutu gönder
                 self.send_command_to_rpi(
-                    {"action": "move_by_direction", "yaw_direction": 0, "pitch_direction": 0, "degrees_to_move": 0})
+                    {"action": "manual_move_continuous", "yaw_direction": 0, "pitch_direction": 0})
 
     def _update_manual_directions_from_states(self):
         """
@@ -1277,16 +1278,12 @@ class HavaSavunmaArayuz(QWidget):
             self._stop_all_manual_movement()
             return
 
-        # Yalnızca hareket yönü varsa komut gönder
-        if self.manual_yaw_direction != 0 or self.manual_pitch_direction != 0:
-            self.send_command_to_rpi(
-                {"action": "move_by_direction", "yaw_direction": self.manual_yaw_direction,
-                 "pitch_direction": self.manual_pitch_direction, "degrees_to_move": self.manual_step_size})
-        else:
-            # Hareket yönü yoksa, motorları durdurmak için sıfır komutu gönder (önemli!)
-            # Bu, rpi_motor_server'daki manual_move_loop'un motor_fire_module'e 0 adım göndermesini sağlar.
-            self.send_command_to_rpi(
-                {"action": "move_by_direction", "yaw_direction": 0, "pitch_direction": 0, "degrees_to_move": 0})
+        # GÜNCELLENDİ: Daha verimli ve daha az gecikmeli manuel kontrol komutu.
+        # Raspberry Pi'ye sürekli küçük adımlar göndermek yerine, sadece hareketin yönünü ve durumunu bildiriyoruz.
+        # Bu, ağ trafiğini azaltır ve RPi'nin hareketi daha akıcı bir şekilde yönetmesini sağlar.
+        self.send_command_to_rpi(
+            {"action": "manual_move_continuous", "yaw_direction": self.manual_yaw_direction,
+             "pitch_direction": self.manual_pitch_direction})
 
     def _stop_all_manual_movement(self):
         """Tüm manuel hareketleri durdurur ve zamanlayıcıyı sıfırlar."""
@@ -1300,7 +1297,7 @@ class HavaSavunmaArayuz(QWidget):
         if self.rpi_thread.is_connected:
             # Motorları durdurmak için sıfır hareket komutu gönder
             self.send_command_to_rpi(
-                {"action": "move_by_direction", "yaw_direction": 0, "pitch_direction": 0, "degrees_to_move": 0})
+                {"action": "manual_move_continuous", "yaw_direction": 0, "pitch_direction": 0})
 
     def _preprocess_frame_for_yolo(self, frame):
         """Çerçeveyi YOLO modeli için ön işler."""
@@ -2234,3 +2231,4 @@ if __name__ == '__main__':
         print(f"Uygulama beklenmedik bir hata ile kapandı: {e}")
         traceback.print_exc()
     print("HATA AYIKLAMA: QApplication olay döngüsünden çıkıldı.")
+}
